@@ -7,6 +7,7 @@ class UTECExtractor {
         this.isExtracting = false;
         this.logMessages = [];
         this.capturedURLs = [];
+        this.pendingRecordings = new Map(); // Map row number to recording promise
         
         this.init();
     }
@@ -15,14 +16,25 @@ class UTECExtractor {
         console.log('🔥 UTEC Extractor initializing...');
         
         this.setupURLCapturing();
+        this.setupMessageListeners();
         
         const runtime = typeof browser !== 'undefined' ? browser : chrome;
+        
+        // Register this tab as the extraction tab
+        runtime.runtime.sendMessage({ action: 'set-extraction-tab' }).catch(console.error);
+        
         runtime.runtime.onMessage.addListener((message, sender, sendResponse) => {
             console.log('📨 Message received:', message);
+            
             if (message.action === 'extract-links') {
                 this.handleExtractCommand();
                 sendResponse({success: true});
+            } else if (message.action === 'recording-captured') {
+                // Handle real-time recording capture from background script
+                this.handleRecordingCaptured(message.recording);
+                sendResponse({success: true});
             }
+            
             return true;
         });
 
@@ -48,90 +60,52 @@ class UTECExtractor {
         }, 1000);
     }
 
+    setupMessageListeners() {
+        // Create a promise resolver map for pending recordings
+        this.recordingResolvers = new Map();
+    }
+
+    handleRecordingCaptured(recording) {
+        this.log('🎯 Real-time recording captured: ' + recording.url);
+        
+        // Check if we have a pending recording waiting for this URL
+        for (const [rowNum, resolver] of this.recordingResolvers.entries()) {
+            // Resolve the first pending recording
+            resolver(recording.url);
+            this.recordingResolvers.delete(rowNum);
+            break;
+        }
+        
+        // Also add to our captured URLs
+        if (!this.capturedURLs.includes(recording.url)) {
+            this.capturedURLs.push(recording.url);
+        }
+    }
+
     setupURLCapturing() {
         this.capturedURLs = [];
         
+        // Monitor for recording buttons being clicked
         document.addEventListener('click', (event) => {
             const target = event.target.closest('button, a');
             if (target && target.id && target.id.startsWith('ver')) {
                 this.log('🖱️ Recording button clicked: ' + target.id);
-                setTimeout(() => {
-                    this.scanForNewRecordingURLs();
-                }, 2000);
             }
         }, true);
 
-        const linkObserver = new MutationObserver((mutations) => {
-            mutations.forEach((mutation) => {
-                mutation.addedNodes.forEach((node) => {
-                    if (node.nodeType === Node.ELEMENT_NODE) {
-                        this.scanNodeForRecordingURLs(node);
-                    }
-                });
-            });
-        });
-
-        linkObserver.observe(document.documentElement, {
-            childList: true,
-            subtree: true,
-            attributes: true,
-            attributeFilter: ['href', 'src']
-        });
-
-        this.linkObserver = linkObserver;
-        this.log('🔧 URL capturing system initialized (DOM-based)');
-    }
-
-    scanNodeForRecordingURLs(node) {
-        try {
-            if (node.tagName === 'A' && node.href) {
-                this.checkAndCaptureURL(node.href);
+        // Intercept window.open calls
+        const originalOpen = window.open;
+        window.open = function(...args) {
+            const url = args[0];
+            if (url && (url.includes('zoom.us/rec') || url.includes('utec.zoom.us'))) {
+                console.log('🎯 Window.open intercepted with recording URL:', url);
+                window.utecExtractor.capturedURLs.push(url);
+                window.utecExtractor.log('🎯 Intercepted recording URL via window.open: ' + url);
             }
-            
-            if (node.querySelectorAll) {
-                const links = node.querySelectorAll('a[href]');
-                links.forEach(link => this.checkAndCaptureURL(link.href));
-                
-                const iframes = node.querySelectorAll('iframe[src]');
-                iframes.forEach(iframe => this.checkAndCaptureURL(iframe.src));
-            }
-            
-            if (node.textContent) {
-                const urlMatches = node.textContent.match(/(https?:\/\/[^\s]+(?:zoom\.us\/rec|utec\.zoom\.us)[^\s]*)/g);
-                if (urlMatches) {
-                    urlMatches.forEach(url => this.checkAndCaptureURL(url));
-                }
-            }
-        } catch (error) {
-            // Silently handle errors
-        }
-    }
+            return originalOpen.apply(this, args);
+        };
 
-    scanForNewRecordingURLs() {
-        try {
-            const allLinks = document.querySelectorAll('a[href*="zoom.us/rec"], a[href*="utec.zoom.us"]');
-            allLinks.forEach(link => this.checkAndCaptureURL(link.href));
-            
-            const allIframes = document.querySelectorAll('iframe[src*="zoom.us/rec"], iframe[src*="utec.zoom.us"]');
-            allIframes.forEach(iframe => this.checkAndCaptureURL(iframe.src));
-            
-            const bodyText = document.body.textContent || '';
-            const urlMatches = bodyText.match(/(https?:\/\/[^\s]+(?:zoom\.us\/rec|utec\.zoom\.us)[^\s]*)/g);
-            if (urlMatches) {
-                urlMatches.forEach(url => this.checkAndCaptureURL(url.trim()));
-            }
-            
-            this.log('🔍 Scanned page, found ' + this.capturedURLs.length + ' total recording URLs');
-        } catch (error) {
-            this.log('⚠️ Error scanning for URLs: ' + error.message);
-        }
-    }
-
-    checkAndCaptureURL(url) {
-        if (url && (url.includes('zoom.us/rec') || url.includes('utec.zoom.us')) && !this.capturedURLs.includes(url)) {
-            this.capturedURLs.push(url);
-            this.log('🎯 Auto-captured recording URL: ' + url);
-        }
+        this.log('🔧 URL capturing system initialized');
     }
 
     async handleExtractCommand() {
@@ -141,53 +115,19 @@ class UTECExtractor {
         }
 
         this.log('🎯 Extract command triggered!');
+        
+        // Clear any old captured recordings in background
+        const runtime = typeof browser !== 'undefined' ? browser : chrome;
+        await runtime.runtime.sendMessage({ action: 'clear-captured-recordings' }).catch(console.error);
+        
         this.showDebugPanel();
         await this.startExtraction();
-    }
-
-    showDebugPanel() {
-        if (this.debugPanel) {
-            this.debugPanel.remove();
-        }
-
-        this.debugPanel = document.createElement('div');
-        this.debugPanel.id = 'utec-debug-panel';
-        this.debugPanel.innerHTML = '<div class="debug-header"><h3>🔍 UTEC Conference Extractor</h3><button id="close-debug" class="close-btn">×</button></div><div class="debug-content"><div class="status-section"><div class="status-item"><span class="label">Status:</span><span id="status-text" class="status">Ready</span></div><div class="status-item"><span class="label">Sessions Found:</span><span id="sessions-count" class="count">0</span></div><div class="status-item"><span class="label">Recording Links:</span><span id="active-count" class="count">0</span></div></div><div class="log-section"><h4>📋 Extraction Log</h4><div id="log-content" class="log-content"></div></div><div class="actions-section"><button id="export-json" class="action-btn" disabled>📄 Export JSON</button><button id="collect-urls" class="action-btn">🔗 Collect URLs</button><button id="copy-log" class="action-btn">📋 Copy Log</button><button id="clear-log" class="action-btn">🗑️ Clear</button></div></div>';
-
-        this.debugPanel.style.cssText = 'position: fixed; top: 20px; right: 20px; width: 400px; max-height: 80vh; background: #1e1e1e; border: 2px solid #007acc; border-radius: 8px; z-index: 10000; font-family: monospace; font-size: 12px; color: #ffffff; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);';
-
-        const style = document.createElement('style');
-        style.textContent = '#utec-debug-panel .debug-header { background: #007acc; padding: 10px; display: flex; justify-content: space-between; align-items: center; } #utec-debug-panel .debug-header h3 { margin: 0; font-size: 14px; color: white; } #utec-debug-panel .close-btn { background: none; border: none; color: white; font-size: 18px; cursor: pointer; } #utec-debug-panel .debug-content { padding: 15px; max-height: 60vh; overflow-y: auto; } #utec-debug-panel .status-section { margin-bottom: 15px; border-bottom: 1px solid #333; padding-bottom: 10px; } #utec-debug-panel .status-item { display: flex; justify-content: space-between; margin-bottom: 5px; } #utec-debug-panel .label { color: #aaa; } #utec-debug-panel .status { color: #4CAF50; font-weight: bold; } #utec-debug-panel .count { color: #007acc; font-weight: bold; } #utec-debug-panel .log-section h4 { margin: 0 0 10px 0; color: #007acc; } #utec-debug-panel .log-content { background: #000; border: 1px solid #333; border-radius: 4px; padding: 10px; height: 200px; overflow-y: auto; font-size: 11px; line-height: 1.3; } #utec-debug-panel .actions-section { margin-top: 15px; display: flex; gap: 5px; flex-wrap: wrap; } #utec-debug-panel .action-btn { background: #007acc; border: none; color: white; padding: 8px 10px; border-radius: 4px; cursor: pointer; font-size: 10px; flex: 1; min-width: 80px; } #utec-debug-panel .action-btn:disabled { background: #555; cursor: not-allowed; }';
-        
-        document.head.appendChild(style);
-        document.body.appendChild(this.debugPanel);
-
-        document.getElementById('close-debug').addEventListener('click', () => {
-            this.debugPanel.remove();
-        });
-
-        document.getElementById('export-json').addEventListener('click', () => {
-            this.exportToJSON();
-        });
-
-        document.getElementById('collect-urls').addEventListener('click', () => {
-            this.collectRecordingURLs();
-        });
-
-        document.getElementById('copy-log').addEventListener('click', () => {
-            this.copyLogToClipboard();
-        });
-
-        document.getElementById('clear-log').addEventListener('click', () => {
-            this.clearLog();
-        });
-
-        this.updateDebugPanel();
     }
 
     async startExtraction() {
         this.isExtracting = true;
         this.extractedSessions = [];
+        this.recordingResolvers.clear();
         this.updateStatus('🔄 Extracting...');
         
         try {
@@ -203,9 +143,9 @@ class UTECExtractor {
             
             const recordingCount = this.extractedSessions.filter(s => s.has_link).length;
             if (recordingCount > 0) {
-                this.log('🎬 Found ' + recordingCount + ' recording tabs opened!');
+                this.log('🎬 Found ' + recordingCount + ' recordings!');
             } else {
-                this.log('📋 No recording tabs were opened');
+                this.log('📋 No recordings found');
             }
             
             const exportBtn = document.getElementById('export-json');
@@ -255,8 +195,8 @@ class UTECExtractor {
                 if (session) {
                     this.extractedSessions.push(session);
                     
-                    if (session.has_link) {
-                        this.log('   🎬 Row ' + (i + 1) + ': RECORDING TAB OPENED - ' + session.course);
+                    if (session.has_link && session.link_url) {
+                        this.log('   🎬 Row ' + (i + 1) + ': RECORDING FOUND - ' + session.course);
                     } else if (session.button_id && session.button_id.startsWith('ver')) {
                         this.log('   🔴 Row ' + (i + 1) + ': DISABLED RECORDING - ' + session.course);
                     } else {
@@ -410,109 +350,60 @@ class UTECExtractor {
                 return directURL;
             }
             
-            // Method 2: Simple click and wait approach
-            this.log('     🖱️ Clicking button and monitoring for new tabs...');
-            
-            // Store current window count
-            const beforeClick = Date.now();
+            // Method 2: Create a promise that will be resolved when we capture the URL
+            const recordingPromise = new Promise((resolve, reject) => {
+                // Store the resolver for this row
+                this.recordingResolvers.set(rowNumber, resolve);
+                
+                // Set a timeout
+                setTimeout(() => {
+                    if (this.recordingResolvers.has(rowNumber)) {
+                        this.recordingResolvers.delete(rowNumber);
+                        reject(new Error('Timeout waiting for recording URL'));
+                    }
+                }, 5000); // 5 second timeout instead of 15
+            });
             
             // Click the button
+            this.log('     🖱️ Clicking button and waiting for tab...');
             button.click();
             
-            // Wait and check for new tabs using a simple polling approach
-            this.log('     ⏳ Waiting for recording tab to open...');
-            
-            for (let attempt = 0; attempt < 15; attempt++) {
-                await this.sleep(1000);
+            try {
+                // Wait for the recording URL with a shorter timeout
+                const url = await recordingPromise;
+                this.log('     ✅ Captured recording URL: ' + url);
+                return url;
+            } catch (timeoutError) {
+                // Fallback: Check if URL was captured through other means
+                this.log('     ⏳ Direct capture timed out, checking fallbacks...');
                 
+                // Check our captured URLs
+                if (this.capturedURLs.length > 0) {
+                    const latestURL = this.capturedURLs[this.capturedURLs.length - 1];
+                    this.log('     ✅ Found URL via fallback: ' + latestURL);
+                    return latestURL;
+                }
+                
+                // Try background script one more time
+                const runtime = typeof browser !== 'undefined' ? browser : chrome;
                 try {
-                    // Try to communicate with background script
-                    const runtime = typeof browser !== 'undefined' ? browser : chrome;
-                    
-                    // Use a simple promise with timeout
-                    const checkPromise = new Promise((resolve, reject) => {
-                        const timeout = setTimeout(() => {
-                            reject(new Error('Background communication timeout'));
-                        }, 2000);
-                        
-                        runtime.runtime.sendMessage({
-                            action: 'get-captured-recordings'
-                        }).then(response => {
-                            clearTimeout(timeout);
-                            resolve(response);
-                        }).catch(error => {
-                            clearTimeout(timeout);
-                            reject(error);
-                        });
+                    const response = await runtime.runtime.sendMessage({
+                        action: 'get-captured-recordings'
                     });
                     
-                    const response = await checkPromise;
-                    
                     if (response && response.recordings && response.recordings.length > 0) {
-                        // Check if any recording was captured after our click
-                        const recentRecordings = response.recordings.filter(rec => 
-                            rec.timestamp >= beforeClick
-                        );
-                        
-                        if (recentRecordings.length > 0) {
-                            const latestRecording = recentRecordings[recentRecordings.length - 1];
-                            this.log('     ✅ Background captured URL: ' + latestRecording.url);
-                            return latestRecording.url;
-                        }
+                        const latestRecording = response.recordings[response.recordings.length - 1];
+                        this.log('     ✅ Background script has URL: ' + latestRecording.url);
+                        return latestRecording.url;
                     }
-                    
                 } catch (bgError) {
-                    this.log('     ⚠️ Background communication failed: ' + bgError.message);
-                    
-                    // Fallback: Try DOM scanning
-                    this.scanForNewRecordingURLs();
-                    
-                    if (this.capturedURLs.length > 0) {
-                        const latestURL = this.capturedURLs[this.capturedURLs.length - 1];
-                        this.log('     ✅ DOM scan found URL: ' + latestURL);
-                        return latestURL;
-                    }
+                    this.log('     ⚠️ Background check failed: ' + bgError.message);
                 }
                 
-                // Log progress
-                if (attempt % 3 === 0) {
-                    this.log('     🔍 Still waiting for recording... (attempt ' + (attempt + 1) + '/15)');
-                }
+                // If all else fails, indicate a tab was opened
+                this.log('     💡 Tab likely opened but URL not captured');
+                return 'RECORDING_TAB_OPENED_FOR_ROW_' + rowNumber;
             }
-            
-            // Method 3: Final check for any recording URLs on the page
-            this.log('     🔄 Final scan for recording URLs...');
-            
-            // Look for any recording links that might have appeared
-            const allLinks = document.querySelectorAll('a[href*="zoom.us/rec"], a[href*="utec.zoom.us"]');
-            if (allLinks.length > 0) {
-                const foundURL = allLinks[0].href;
-                this.log('     ✅ Found recording link on page: ' + foundURL);
-                return foundURL;
-            }
-            
-            // Check for iframes with recording content
-            const allIframes = document.querySelectorAll('iframe');
-            for (const iframe of allIframes) {
-                try {
-                    if (iframe.src && (iframe.src.includes('zoom.us/rec') || iframe.src.includes('utec.zoom.us'))) {
-                        this.log('     ✅ Found recording URL in iframe: ' + iframe.src);
-                        return iframe.src;
-                    }
-                } catch (e) {
-                    // Cross-origin iframe, ignore
-                }
-            }
-            
-            // Method 4: Check if a new window was opened (basic detection)
-            this.log('     🪟 Checking for new windows...');
-            
-            // Simple check: if the button was clicked and we're still here, 
-            // assume a recording tab opened that we couldn't detect
-            this.log('     💡 Button was clicked - a recording tab likely opened');
-            this.log('     📝 Recording tab will need manual URL collection');
-            
-            return 'RECORDING_TAB_OPENED_FOR_ROW_' + rowNumber;
 
         } catch (error) {
             this.log('     ❌ Error extracting recording link: ' + error.message);
@@ -551,18 +442,51 @@ class UTECExtractor {
 
     async collectRecordingURLs() {
         try {
-            this.log('🔗 Starting manual recording URL collection...');
+            this.log('🔗 Checking for any uncaptured recordings...');
             
+            // First, get any recordings the background script might have captured
+            const runtime = typeof browser !== 'undefined' ? browser : chrome;
+            const response = await runtime.runtime.sendMessage({
+                action: 'get-captured-recordings'
+            });
+            
+            if (response && response.recordings && response.recordings.length > 0) {
+                this.log('📋 Background script has ' + response.recordings.length + ' recordings');
+                
+                // Try to match recordings to sessions
+                let matched = 0;
+                for (const recording of response.recordings) {
+                    // Find sessions that need URLs
+                    const needsURL = this.extractedSessions.find(s => 
+                        s.link_url && s.link_url.startsWith('RECORDING_TAB_OPENED')
+                    );
+                    
+                    if (needsURL) {
+                        needsURL.link_url = recording.url;
+                        needsURL.has_link = true;
+                        matched++;
+                        this.log('✅ Matched recording to ' + needsURL.course);
+                    }
+                }
+                
+                if (matched > 0) {
+                    this.log('🎉 Automatically matched ' + matched + ' recordings!');
+                    this.updateDebugPanel();
+                }
+            }
+            
+            // Check if we still need manual collection
             const sessionsWithTabs = this.extractedSessions.filter(s => 
                 s.link_url && s.link_url.startsWith('RECORDING_TAB_OPENED')
             );
             
             if (sessionsWithTabs.length === 0) {
-                alert('No recording tabs were opened during extraction.');
+                alert('All recordings have been captured! You can now export the JSON.');
                 return;
             }
             
-            const instructions = 'Found ' + sessionsWithTabs.length + ' recording tabs.\n\n1. Look at your browser tabs for recording URLs\n2. Copy each recording URL\n3. Match them to the courses below\n\nContinue?';
+            // Proceed with manual collection for remaining ones
+            const instructions = 'Still need ' + sessionsWithTabs.length + ' recording URLs.\n\n1. Look at your browser tabs for recording URLs\n2. Copy each recording URL\n3. Match them to the courses below\n\nContinue?';
             
             if (!confirm(instructions)) {
                 return;
@@ -584,11 +508,8 @@ class UTECExtractor {
                 }
             }
             
-            this.log('🎉 Collection complete! Updated ' + urlsCollected + ' sessions');
+            this.log('🎉 Manual collection complete! Updated ' + urlsCollected + ' sessions');
             this.updateDebugPanel();
-            
-            const exportBtn = document.getElementById('export-json');
-            if (exportBtn) exportBtn.disabled = false;
             
             alert('Updated ' + urlsCollected + ' out of ' + sessionsWithTabs.length + ' sessions.\n\nYou can now export the JSON.');
             
@@ -597,9 +518,49 @@ class UTECExtractor {
         }
     }
 
+    showDebugPanel() {
+        if (this.debugPanel) {
+            this.debugPanel.remove();
+        }
+
+        this.debugPanel = document.createElement('div');
+        this.debugPanel.id = 'utec-debug-panel';
+        this.debugPanel.innerHTML = '<div class="debug-header"><h3>🔍 UTEC Conference Extractor</h3><button id="close-debug" class="close-btn">×</button></div><div class="debug-content"><div class="status-section"><div class="status-item"><span class="label">Status:</span><span id="status-text" class="status">Ready</span></div><div class="status-item"><span class="label">Sessions Found:</span><span id="sessions-count" class="count">0</span></div><div class="status-item"><span class="label">Recording Links:</span><span id="active-count" class="count">0</span></div></div><div class="log-section"><h4>📋 Extraction Log</h4><div id="log-content" class="log-content"></div></div><div class="actions-section"><button id="export-json" class="action-btn" disabled>📄 Export JSON</button><button id="collect-urls" class="action-btn">🔗 Collect URLs</button><button id="copy-log" class="action-btn">📋 Copy Log</button><button id="clear-log" class="action-btn">🗑️ Clear</button></div></div>';
+
+        this.debugPanel.style.cssText = 'position: fixed; top: 20px; right: 20px; width: 400px; max-height: 80vh; background: #1e1e1e; border: 2px solid #007acc; border-radius: 8px; z-index: 10000; font-family: monospace; font-size: 12px; color: #ffffff; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);';
+
+        const style = document.createElement('style');
+        style.textContent = '#utec-debug-panel .debug-header { background: #007acc; padding: 10px; display: flex; justify-content: space-between; align-items: center; } #utec-debug-panel .debug-header h3 { margin: 0; font-size: 14px; color: white; } #utec-debug-panel .close-btn { background: none; border: none; color: white; font-size: 18px; cursor: pointer; } #utec-debug-panel .debug-content { padding: 15px; max-height: 60vh; overflow-y: auto; } #utec-debug-panel .status-section { margin-bottom: 15px; border-bottom: 1px solid #333; padding-bottom: 10px; } #utec-debug-panel .status-item { display: flex; justify-content: space-between; margin-bottom: 5px; } #utec-debug-panel .label { color: #aaa; } #utec-debug-panel .status { color: #4CAF50; font-weight: bold; } #utec-debug-panel .count { color: #007acc; font-weight: bold; } #utec-debug-panel .log-section h4 { margin: 0 0 10px 0; color: #007acc; } #utec-debug-panel .log-content { background: #000; border: 1px solid #333; border-radius: 4px; padding: 10px; height: 200px; overflow-y: auto; font-size: 11px; line-height: 1.3; } #utec-debug-panel .actions-section { margin-top: 15px; display: flex; gap: 5px; flex-wrap: wrap; } #utec-debug-panel .action-btn { background: #007acc; border: none; color: white; padding: 8px 10px; border-radius: 4px; cursor: pointer; font-size: 10px; flex: 1; min-width: 80px; } #utec-debug-panel .action-btn:disabled { background: #555; cursor: not-allowed; }';
+        
+        document.head.appendChild(style);
+        document.body.appendChild(this.debugPanel);
+
+        document.getElementById('close-debug').addEventListener('click', () => {
+            this.debugPanel.remove();
+        });
+
+        document.getElementById('export-json').addEventListener('click', () => {
+            this.exportToJSON();
+        });
+
+        document.getElementById('collect-urls').addEventListener('click', () => {
+            this.collectRecordingURLs();
+        });
+
+        document.getElementById('copy-log').addEventListener('click', () => {
+            this.copyLogToClipboard();
+        });
+
+        document.getElementById('clear-log').addEventListener('click', () => {
+            this.clearLog();
+        });
+
+        this.updateDebugPanel();
+    }
+
     exportToJSON() {
         try {
-            const activeSessions = this.extractedSessions.filter(s => s.has_link);
+            const activeSessions = this.extractedSessions.filter(s => s.has_link && !s.link_url.startsWith('RECORDING_TAB_OPENED'));
             
             const exportData = {
                 extraction_info: {
@@ -693,7 +654,7 @@ class UTECExtractor {
         }
         
         if (activeCount) {
-            const active = this.extractedSessions.filter(s => s.has_link).length;
+            const active = this.extractedSessions.filter(s => s.has_link && !s.link_url.startsWith('RECORDING_TAB_OPENED')).length;
             activeCount.textContent = active;
         }
     }

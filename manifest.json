@@ -1,21 +1,23 @@
 {
   "manifest_version": 2,
   "name": "UTEC Conference Link Extractor",
-  "version": "1.0.0",
-  "description": "Extract conference links from UTEC platform",
+  "version": "1.1.0",
+  "description": "Extract conference links from UTEC platform with improved tab detection",
 
   "permissions": [
     "activeTab",
     "https://conference.utec.edu.pe/*",
     "https://*.utec.edu.pe/*",
+    "https://*.zoom.us/*",
     "storage",
     "notifications",
-    "tabs"
+    "tabs",
+    "webNavigation"
   ],
 
   "background": {
     "scripts": ["background.js"],
-    "persistent": false
+    "persistent": true
   },
 
   "content_scripts": [
@@ -35,7 +37,7 @@
   "commands": {
     "extract-links": {
       "suggested_key": {
-        "default": "Ctrl+Shift+L"
+        "default": "Ctrl+Alt+Shift+L"
       },
       "description": "Extract conference links from current page"
     }
