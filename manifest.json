@@ -1,0 +1,49 @@
+{
+  "manifest_version": 2,
+  "name": "UTEC Conference Link Extractor",
+  "version": "1.0.0",
+  "description": "Extract conference links from UTEC platform",
+
+  "permissions": [
+    "activeTab",
+    "https://conference.utec.edu.pe/*",
+    "https://*.utec.edu.pe/*",
+    "storage",
+    "notifications",
+    "tabs"
+  ],
+
+  "background": {
+    "scripts": ["background.js"],
+    "persistent": false
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["https://*.utec.edu.pe/*"],
+      "js": ["content-simple.js"],
+      "run_at": "document_end",
+      "all_frames": false
+    }
+  ],
+
+  "browser_action": {
+    "default_popup": "popup.html",
+    "default_title": "UTEC Conference Extractor"
+  },
+
+  "commands": {
+    "extract-links": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+L"
+      },
+      "description": "Extract conference links from current page"
+    }
+  },
+
+  "web_accessible_resources": [
+    "debug-panel.html",
+    "debug-panel.css",
+    "debug-panel.js"
+  ]
+}
