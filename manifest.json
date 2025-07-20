@@ -37,7 +37,7 @@
   "commands": {
     "extract-links": {
       "suggested_key": {
-        "default": "Ctrl+Alt+Shift+L"
+        "default": "Ctrl+Shift+L"
       },
       "description": "Extract conference links from current page"
     }
@@ -47,5 +47,10 @@
     "debug-panel.html",
     "debug-panel.css",
     "debug-panel.js"
-  ]
+  ],
+
+  "icons": {
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
 }
