@@ -31,6 +31,7 @@ let extractedData = [];
 let debugPanel = null;
 let allWeeksData = {}; // For recursive mode: { weekNumber: [recordings] }
 let isRecursiveMode = false;
+let isSpawnedTab = false; // Track if this tab was spawned for recursive extraction
 let periodo = ''; // Store periodo for export
 
 // Show error panel
@@ -156,9 +157,8 @@ function showModeSelectionPanel() {
     };
 
     document.getElementById('extract-all').onclick = () => {
-        isRecursiveMode = true;
-        allWeeksData = {};
-        performExtraction();
+        // Use the new tab duplication method for all weeks
+        startAutomaticRecursiveExtraction();
     };
 }
 
@@ -201,8 +201,34 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
             return;
         }
 
-        // Show mode selection panel
+        // Show mode selection panel (popup triggered)
         showModeSelectionPanel();
+
+    } else if (message.action === 'automatic-extract') {
+        // Shortcut triggered - automatic full extraction with tab duplication
+        console.log('Received automatic-extract command (shortcut)');
+
+        if (!window.location.pathname.includes('/consulta-alumno')) {
+            showErrorPanel('Please navigate to the "Consulta Alumno" page first.');
+            return;
+        }
+
+        // Start automatic recursive extraction
+        startAutomaticRecursiveExtraction();
+
+    } else if (message.action === 'continue-recursive-extraction') {
+        // This is a spawned tab - click Anterior then extract
+        console.log('Received continue-recursive-extraction command');
+        isSpawnedTab = message.isSpawnedTab || false;
+        continueRecursiveExtraction();
+
+    } else if (message.action === 'display-final-results') {
+        // Original tab receiving final results from all weeks
+        console.log('Received final results:', message.allRecordings);
+        allWeeksData = message.allRecordings;
+        periodo = message.periodo;
+        displayAllWeeksResults();
+
     } else if (message.action === 'recording-captured') {
         console.log('Recording captured:', message.recording);
         updateDebugPanel();
@@ -485,6 +511,240 @@ async function waitForWeekChange(previousWeek) {
             resolve();
         }, 10000);
     });
+}
+
+// Start automatic recursive extraction (triggered by shortcut)
+async function startAutomaticRecursiveExtraction() {
+    const currentWeek = getWeekNumber();
+    periodo = getPeriodo();
+
+    console.log('Starting automatic recursive extraction from week', currentWeek);
+
+    // Show progress panel
+    showAutomaticExtractionPanel(currentWeek);
+
+    // Initialize recursive extraction state in background
+    await browser.runtime.sendMessage({
+        action: 'start-recursive-extraction',
+        currentWeek: currentWeek,
+        periodo: periodo
+    });
+
+    // Start extraction for current week
+    isRecursiveMode = true;
+    isSpawnedTab = false;
+    await performTabDuplicationExtraction();
+}
+
+// Continue recursive extraction (for spawned tabs)
+async function continueRecursiveExtraction() {
+    console.log('Continuing recursive extraction in spawned tab');
+
+    // Click Anterior button to go to previous week
+    const clicked = clickAnteriorButton();
+    if (!clicked) {
+        console.error('Could not find Anterior button');
+        // Finish extraction
+        await browser.runtime.sendMessage({ action: 'finish-recursive-extraction' });
+        return;
+    }
+
+    // Wait for page to update
+    await sleep(2000);
+
+    // Wait for table to load
+    await waitForTableLoad();
+
+    // Now extract from this week
+    isRecursiveMode = true;
+    await performTabDuplicationExtraction();
+}
+
+// Wait for table to load
+async function waitForTableLoad() {
+    return new Promise((resolve) => {
+        let attempts = 0;
+        const checkInterval = setInterval(() => {
+            const table = document.querySelector('table');
+            const buttons = document.querySelectorAll('button[id^="ver"]');
+            attempts++;
+
+            if (table || buttons.length > 0 || attempts > 20) {
+                clearInterval(checkInterval);
+                setTimeout(resolve, 500);
+            }
+        }, 300);
+    });
+}
+
+// Perform extraction with tab duplication (new method)
+async function performTabDuplicationExtraction() {
+    try {
+        const weekNumber = getWeekNumber();
+        console.log('Extracting week', weekNumber);
+
+        // Update panel
+        updateAutomaticExtractionStatus(`Extracting week ${weekNumber}...`);
+
+        // Clear any previous recordings for this extraction
+        extractedData = [];
+
+        // Notify background script
+        browser.runtime.sendMessage({ action: 'set-extraction-tab' });
+        await browser.runtime.sendMessage({ action: 'clear-captured-recordings' });
+
+        // Find recording buttons
+        const recordingButtons = findRecordingButtons();
+
+        if (recordingButtons.length === 0) {
+            console.log('No recordings found in week', weekNumber);
+            updateAutomaticExtractionStatus(`Week ${weekNumber}: No recordings found`);
+
+            // Store empty array for this week
+            await browser.runtime.sendMessage({
+                action: 'store-week-recordings',
+                weekNumber: weekNumber,
+                recordings: []
+            });
+        } else {
+            updateAutomaticExtractionStatus(`Week ${weekNumber}: Found ${recordingButtons.length} recording(s)`);
+
+            // Collect subject info first
+            recordingButtons.forEach((button, index) => {
+                const subjectData = extractSubjectInfo(button);
+                extractedData.push({
+                    index: index,
+                    ...subjectData,
+                    buttonId: button.id,
+                    timestamp: Date.now(),
+                    weekNumber: weekNumber
+                });
+            });
+
+            // Click each button
+            for (let i = 0; i < recordingButtons.length; i++) {
+                const button = recordingButtons[i];
+                const data = extractedData[i];
+
+                await browser.runtime.sendMessage({
+                    action: 'expect-recording',
+                    expectedData: data
+                });
+
+                button.click();
+                await sleep(500);
+            }
+
+            // Wait for recordings to be captured
+            await sleep(1500);
+
+            // Get captured recordings
+            const response = await browser.runtime.sendMessage({
+                action: 'get-captured-recordings'
+            });
+
+            const recordings = response?.recordings || [];
+            const finalData = recordings.map((recording) => ({
+                weekNumber: recording.weekNumber,
+                subject: recording.subject,
+                seccion: recording.seccion,
+                fecha: recording.fecha,
+                horaInicio: recording.horaInicio,
+                docente: recording.docente,
+                tipo: recording.tipo,
+                estado: recording.estado,
+                modalidad: recording.modalidad,
+                url: recording.url,
+                title: recording.title,
+                timestamp: recording.timestamp,
+                buttonId: recording.buttonId
+            }));
+
+            // Store this week's recordings
+            await browser.runtime.sendMessage({
+                action: 'store-week-recordings',
+                weekNumber: weekNumber,
+                recordings: finalData
+            });
+
+            updateAutomaticExtractionStatus(`Week ${weekNumber}: Captured ${finalData.length} recording(s)`);
+        }
+
+        // Check if we need to continue to previous week
+        if (weekNumber > 1) {
+            updateAutomaticExtractionStatus(`Duplicating tab for week ${weekNumber - 1}...`);
+
+            // Request background to duplicate this tab
+            await browser.runtime.sendMessage({
+                action: 'duplicate-tab-for-next-week'
+            });
+
+            // This tab's job is done - it will be closed by background when extraction finishes
+        } else {
+            // Week 1 reached - finish extraction
+            updateAutomaticExtractionStatus('All weeks extracted! Finalizing...');
+            await browser.runtime.sendMessage({ action: 'finish-recursive-extraction' });
+        }
+
+    } catch (error) {
+        console.error('Extraction error:', error);
+        updateAutomaticExtractionStatus(`Error: ${error.message}`);
+    }
+}
+
+// Show automatic extraction panel
+function showAutomaticExtractionPanel(startWeek) {
+    if (debugPanel) debugPanel.remove();
+
+    debugPanel = document.createElement('div');
+    debugPanel.id = 'utec-debug-panel';
+    debugPanel.innerHTML = `
+        <div style="
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            width: 350px;
+            max-height: 500px;
+            background: white;
+            border: 2px solid #28a745;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 999999;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        ">
+            <div style="
+                background: #28a745;
+                color: white;
+                padding: 10px;
+                font-weight: bold;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            ">
+                <span>Automatic Extraction</span>
+                <span style="font-size: 12px;">Week ${startWeek} → 1</span>
+            </div>
+            <div id="extraction-status" style="
+                padding: 15px;
+                max-height: 400px;
+                overflow-y: auto;
+            ">
+                <p style="margin: 0;">Starting extraction...</p>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(debugPanel);
+}
+
+// Update automatic extraction status
+function updateAutomaticExtractionStatus(message) {
+    const statusDiv = document.getElementById('extraction-status');
+    if (statusDiv) {
+        const timestamp = new Date().toLocaleTimeString();
+        statusDiv.innerHTML += `<p style="margin: 5px 0; font-size: 13px;"><span style="color: #666;">[${timestamp}]</span> ${message}</p>`;
+        statusDiv.scrollTop = statusDiv.scrollHeight;
+    }
 }
 
 // Show debug panel
