@@ -1003,11 +1003,6 @@ function displayResults(data) {
 
 // Display results for all weeks (recursive mode)
 function displayAllWeeksResults() {
-    if (!debugPanel) return;
-
-    const content = debugPanel.querySelector('#debug-content');
-    const actions = debugPanel.querySelector('#debug-actions');
-
     // Calculate totals
     let totalRecordings = 0;
     const weekNumbers = Object.keys(allWeeksData).map(Number).sort((a, b) => b - a);
@@ -1015,62 +1010,114 @@ function displayAllWeeksResults() {
         totalRecordings += allWeeksData[week].length;
     });
 
-    if (content) {
-        content.innerHTML = `<h3 style="margin: 0 0 10px 0;">All Weeks Extracted!</h3>`;
-        content.innerHTML += `<p style="color: green;">Total: ${totalRecordings} recordings across ${weekNumbers.length} weeks</p>`;
-
-        weekNumbers.forEach(week => {
-            const weekData = allWeeksData[week];
-            content.innerHTML += `
-                <div style="
-                    margin: 8px 0;
-                    padding: 8px;
-                    background: #f5f5f5;
-                    border-radius: 4px;
-                    border-left: 3px solid #28a745;
-                ">
-                    <strong>Week ${week}</strong>: ${weekData.length} recording(s)
-                </div>
-            `;
-        });
+    // Remove any existing panel and create a fresh results panel
+    if (debugPanel) {
+        debugPanel.remove();
     }
 
-    if (actions && totalRecordings > 0) {
-        actions.style.display = 'block';
-        actions.innerHTML = `
-            <button id="export-json" style="
+    debugPanel = document.createElement('div');
+    debugPanel.id = 'utec-debug-panel';
+    debugPanel.innerHTML = `
+        <div style="
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            width: 400px;
+            max-height: 600px;
+            background: white;
+            border: 2px solid #28a745;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 999999;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        ">
+            <div style="
                 background: #28a745;
                 color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                cursor: pointer;
-                width: 48%;
-                margin-right: 4%;
-            ">Export All as JSON</button>
-            <button id="close-tabs" style="
-                background: #dc3545;
-                color: white;
-                border: none;
-                padding: 8px 16px;
-                border-radius: 4px;
-                cursor: pointer;
-                width: 48%;
-            ">Close All Zoom Tabs</button>
-        `;
+                padding: 10px;
+                font-weight: bold;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            ">
+                <span>Extraction Complete!</span>
+                <button onclick="this.closest('#utec-debug-panel').remove()" style="
+                    background: none;
+                    border: none;
+                    color: white;
+                    font-size: 20px;
+                    cursor: pointer;
+                ">×</button>
+            </div>
+            <div id="debug-content" style="
+                padding: 15px;
+                overflow-y: auto;
+                flex: 1;
+                max-height: 400px;
+            ">
+                <h3 style="margin: 0 0 10px 0;">All Weeks Extracted!</h3>
+                <p style="color: green; margin-bottom: 15px;">Total: ${totalRecordings} recordings across ${weekNumbers.length} weeks</p>
+                ${weekNumbers.map(week => {
+                    const weekData = allWeeksData[week];
+                    return `
+                        <div style="
+                            margin: 8px 0;
+                            padding: 8px;
+                            background: #f5f5f5;
+                            border-radius: 4px;
+                            border-left: 3px solid #28a745;
+                        ">
+                            <strong>Week ${week}</strong>: ${weekData.length} recording(s)
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+            <div id="debug-actions" style="
+                padding: 10px;
+                border-top: 1px solid #eee;
+                ${totalRecordings > 0 ? '' : 'display: none;'}
+            ">
+                <button id="export-json" style="
+                    background: #28a745;
+                    color: white;
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    width: 48%;
+                    margin-right: 4%;
+                ">Export All as JSON</button>
+                <button id="close-tabs" style="
+                    background: #dc3545;
+                    color: white;
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    width: 48%;
+                ">Close All Zoom Tabs</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(debugPanel);
 
-        const exportBtn = actions.querySelector('#export-json');
-        const closeBtn = actions.querySelector('#close-tabs');
+    // Add event listeners
+    const exportBtn = debugPanel.querySelector('#export-json');
+    const closeBtn = debugPanel.querySelector('#close-tabs');
 
-        if (exportBtn) {
-            exportBtn.onclick = () => exportAllWeeksData();
-        }
+    if (exportBtn) {
+        exportBtn.onclick = () => exportAllWeeksData();
+    }
 
-        if (closeBtn) {
-            closeBtn.onclick = () => closeAllZoomTabs();
-        }
+    if (closeBtn) {
+        closeBtn.onclick = () => closeAllZoomTabs();
+    }
 
-        // Auto-download combined JSON
+    // Auto-download combined JSON
+    if (totalRecordings > 0) {
         exportAllWeeksData();
     }
 
