@@ -217,9 +217,9 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
         startAutomaticRecursiveExtraction();
 
     } else if (message.action === 'navigate-to-previous-week') {
-        // Phase 1: This is a spawned tab - click Anterior to go to target week
-        console.log('Received navigate-to-previous-week command, target:', message.targetWeek);
-        navigateToPreviousWeek(message.targetWeek);
+        // Phase 1: This is a spawned tab - click Anterior multiple times to reach target week
+        console.log('Received navigate-to-previous-week command, target:', message.targetWeek, 'clicks needed:', message.anteriorClicks);
+        navigateToPreviousWeek(message.targetWeek, message.anteriorClicks, message.startWeek);
 
     } else if (message.action === 'extraction-phase-starting') {
         // Phase 2 starting - update UI
@@ -568,29 +568,36 @@ async function startAutomaticRecursiveExtraction() {
 }
 
 // Phase 1: Navigate to previous week (called on spawned tabs)
-async function navigateToPreviousWeek(targetWeek) {
-    console.log('Navigating to week', targetWeek);
+// Duplicated tabs always reset to the current university week, so we need to
+// click Anterior multiple times to reach the target week
+async function navigateToPreviousWeek(targetWeek, anteriorClicks, startWeek) {
+    console.log('Navigating to week', targetWeek, '- clicking Anterior', anteriorClicks, 'time(s)');
 
-    // Click Anterior button
-    const clicked = clickAnteriorButton();
-    if (!clicked) {
-        console.error('Could not find Anterior button');
-        // Still register this tab and signal all tabs ready
-        await browser.runtime.sendMessage({
-            action: 'register-week-tab',
-            weekNumber: getWeekNumber()
-        });
-        await browser.runtime.sendMessage({ action: 'all-tabs-ready' });
-        return;
+    // Click Anterior button the required number of times
+    for (let i = 0; i < anteriorClicks; i++) {
+        const clicked = clickAnteriorButton();
+        if (!clicked) {
+            console.error('Could not find Anterior button on click', i + 1);
+            break;
+        }
+
+        // Wait for page to update between clicks
+        await sleep(1500);
+        await waitForTableLoad();
+
+        const currentWeek = getWeekNumber();
+        console.log(`After Anterior click ${i + 1}/${anteriorClicks}, now at week ${currentWeek}`);
+
+        // If we've reached the target, stop clicking
+        if (currentWeek === targetWeek) {
+            console.log('Reached target week', targetWeek);
+            break;
+        }
     }
-
-    // Wait for page to update
-    await sleep(2000);
-    await waitForTableLoad();
 
     // Verify we're on the correct week
     const actualWeek = getWeekNumber();
-    console.log('After clicking Anterior, now at week', actualWeek);
+    console.log('Final week after navigation:', actualWeek);
 
     // Register this tab for this week
     await browser.runtime.sendMessage({
@@ -598,7 +605,7 @@ async function navigateToPreviousWeek(targetWeek) {
         weekNumber: actualWeek
     });
 
-    // If we need to continue duplicating
+    // If we need to continue duplicating (actualWeek > 1)
     if (actualWeek > 1) {
         // Duplicate this tab for the next week
         await browser.runtime.sendMessage({

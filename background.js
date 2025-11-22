@@ -236,9 +236,13 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // Phase 1: Duplicate current tab to go to previous week (NO extraction yet)
         const currentTabId = sender.tab.id;
         const currentWeek = message.currentWeek;
+        const targetWeek = currentWeek - 1;
+        // Calculate how many Anterior clicks needed from the starting week
+        // (duplicated tabs always reset to the starting week)
+        const anteriorClicks = recursiveExtractionState.startWeek - targetWeek;
 
         browser.tabs.duplicate(currentTabId).then((newTab) => {
-            console.log('Duplicated tab:', newTab.id, 'for week', currentWeek - 1);
+            console.log('Duplicated tab:', newTab.id, 'for week', targetWeek, '- needs', anteriorClicks, 'Anterior clicks');
 
             // Wait for the tab to be ready, then tell it to click Anterior
             const waitForTabReady = (tabId, retries = 0) => {
@@ -247,7 +251,9 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         setTimeout(() => {
                             browser.tabs.sendMessage(tabId, {
                                 action: 'navigate-to-previous-week',
-                                targetWeek: currentWeek - 1
+                                targetWeek: targetWeek,
+                                anteriorClicks: anteriorClicks,
+                                startWeek: recursiveExtractionState.startWeek
                             }).catch((err) => {
                                 console.error('Failed to send navigate message:', err);
                                 if (retries < 5) {
