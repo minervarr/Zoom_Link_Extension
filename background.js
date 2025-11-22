@@ -245,9 +245,11 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
             console.log('Duplicated tab:', newTab.id, 'for week', targetWeek, '- needs', anteriorClicks, 'Anterior clicks');
 
             // Wait for the tab to be ready, then tell it to click Anterior
+            // Note: The content script will wait for the Anterior button to appear (can take 5+ seconds)
             const waitForTabReady = (tabId, retries = 0) => {
                 browser.tabs.get(tabId).then((tab) => {
                     if (tab.status === 'complete') {
+                        // Give page a bit more time to initialize before sending message
                         setTimeout(() => {
                             browser.tabs.sendMessage(tabId, {
                                 action: 'navigate-to-previous-week',
@@ -256,12 +258,12 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
                                 startWeek: recursiveExtractionState.startWeek
                             }).catch((err) => {
                                 console.error('Failed to send navigate message:', err);
-                                if (retries < 5) {
+                                if (retries < 10) {
                                     setTimeout(() => waitForTabReady(tabId, retries + 1), 1000);
                                 }
                             });
-                        }, 500);
-                    } else if (retries < 10) {
+                        }, 1000); // Increased initial delay
+                    } else if (retries < 15) {
                         setTimeout(() => waitForTabReady(tabId, retries + 1), 500);
                     }
                 }).catch(console.error);

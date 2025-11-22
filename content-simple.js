@@ -573,6 +573,21 @@ async function startAutomaticRecursiveExtraction() {
 async function navigateToPreviousWeek(targetWeek, anteriorClicks, startWeek) {
     console.log('Navigating to week', targetWeek, '- clicking Anterior', anteriorClicks, 'time(s)');
 
+    // Wait for page to fully load (Anterior button can take 5+ seconds to appear)
+    console.log('Waiting for page to load (Anterior button)...');
+    const buttonFound = await waitForAnteriorButton(10000);
+    if (!buttonFound) {
+        console.error('Anterior button never appeared, cannot navigate');
+        // Still try to register whatever week we're on
+        const actualWeek = getWeekNumber();
+        await browser.runtime.sendMessage({
+            action: 'register-week-tab',
+            weekNumber: actualWeek
+        });
+        await browser.runtime.sendMessage({ action: 'all-tabs-ready' });
+        return;
+    }
+
     // Click Anterior button the required number of times
     for (let i = 0; i < anteriorClicks; i++) {
         const clicked = clickAnteriorButton();
@@ -581,8 +596,9 @@ async function navigateToPreviousWeek(targetWeek, anteriorClicks, startWeek) {
             break;
         }
 
-        // Wait for page to update between clicks
-        await sleep(1500);
+        // Wait for page to update between clicks (button may temporarily disappear)
+        await sleep(500);
+        await waitForAnteriorButton(10000); // Wait for button to reappear
         await waitForTableLoad();
 
         const currentWeek = getWeekNumber();
@@ -735,6 +751,31 @@ async function waitForTableLoad() {
                 setTimeout(resolve, 500);
             }
         }, 300);
+    });
+}
+
+// Wait for Anterior button to appear (page can take 5+ seconds to fully load)
+async function waitForAnteriorButton(timeoutMs = 10000) {
+    return new Promise((resolve) => {
+        const startTime = Date.now();
+        const checkInterval = setInterval(() => {
+            const buttons = document.querySelectorAll('button.btn.btn-primary');
+            for (const btn of buttons) {
+                if (btn.textContent.trim() === 'Anterior') {
+                    clearInterval(checkInterval);
+                    console.log('Anterior button found after', Date.now() - startTime, 'ms');
+                    resolve(true);
+                    return;
+                }
+            }
+
+            // Timeout check
+            if (Date.now() - startTime >= timeoutMs) {
+                clearInterval(checkInterval);
+                console.log('Timeout waiting for Anterior button after', timeoutMs, 'ms');
+                resolve(false);
+            }
+        }, 200);
     });
 }
 
