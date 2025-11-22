@@ -3,7 +3,40 @@
  * Runs on conference.utec.edu.pe pages to extract and click recording links
  */
 
+// Default settings (will be loaded from storage)
+const DEFAULT_SETTINGS = {
+    autoDownload: true,
+    includeMetadata: true,
+    autoCloseTabs: true,
+    autoCloseWeekTabs: true,
+    showNotifications: true,
+    debugMode: false
+};
+
+// Current settings
+let currentSettings = { ...DEFAULT_SETTINGS };
+
+// Debug logging helper
+function debugLog(...args) {
+    if (currentSettings.debugMode) {
+        console.log('[UTEC Extractor]', ...args);
+    }
+}
+
 console.log('UTEC Conference Extractor content script loaded');
+
+// Load settings from storage
+async function loadSettings() {
+    try {
+        const result = await browser.storage.local.get('utecExtractorSettings');
+        if (result.utecExtractorSettings) {
+            currentSettings = { ...DEFAULT_SETTINGS, ...result.utecExtractorSettings };
+        }
+        debugLog('Settings loaded:', currentSettings);
+    } catch (error) {
+        console.error('Error loading settings:', error);
+    }
+}
 
 // Wait for page to be fully loaded before setting up
 if (document.readyState === 'loading') {
@@ -12,16 +45,19 @@ if (document.readyState === 'loading') {
     init();
 }
 
-function init() {
-    console.log('UTEC Extractor initialized. Current URL:', window.location.href);
-    console.log('Page title:', document.title);
-    
+async function init() {
+    // Load settings first
+    await loadSettings();
+
+    debugLog('UTEC Extractor initialized. Current URL:', window.location.href);
+    debugLog('Page title:', document.title);
+
     // Check if there are any buttons with "ver" in their ID
     setTimeout(() => {
         const verButtons = document.querySelectorAll('button[id*="ver"]');
-        console.log('Found buttons with "ver" in ID:', verButtons.length);
+        debugLog('Found buttons with "ver" in ID:', verButtons.length);
         if (verButtons.length > 0) {
-            console.log('Sample button:', verButtons[0].outerHTML);
+            debugLog('Sample button:', verButtons[0].outerHTML);
         }
     }, 1000);
 }
@@ -193,7 +229,13 @@ function clickAnteriorButton() {
 // Listen for messages from background script
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'extract-links') {
-        console.log('Received extract-links command');
+        debugLog('Received extract-links command');
+
+        // Update settings if provided
+        if (message.settings) {
+            currentSettings = { ...DEFAULT_SETTINGS, ...message.settings };
+            debugLog('Updated settings from popup:', currentSettings);
+        }
 
         // Check if we're on the correct page
         if (!window.location.pathname.includes('/consulta-alumno')) {
@@ -206,15 +248,18 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     } else if (message.action === 'automatic-extract') {
         // Shortcut triggered - automatic full extraction with tab duplication
-        console.log('Received automatic-extract command (shortcut)');
+        debugLog('Received automatic-extract command (shortcut)');
 
-        if (!window.location.pathname.includes('/consulta-alumno')) {
-            showErrorPanel('Please navigate to the "Consulta Alumno" page first.');
-            return;
-        }
+        // Reload settings before automatic extraction
+        loadSettings().then(() => {
+            if (!window.location.pathname.includes('/consulta-alumno')) {
+                showErrorPanel('Please navigate to the "Consulta Alumno" page first.');
+                return;
+            }
 
-        // Start automatic recursive extraction (Phase 1: Duplicate tabs)
-        startAutomaticRecursiveExtraction();
+            // Start automatic recursive extraction (Phase 1: Duplicate tabs)
+            startAutomaticRecursiveExtraction();
+        });
 
     } else if (message.action === 'navigate-to-previous-week') {
         // Phase 1: This is a spawned tab - click Anterior multiple times to reach target week
@@ -995,8 +1040,10 @@ function displayResults(data) {
                 closeBtn.onclick = () => closeAllZoomTabs();
             }
 
-            // Auto-download JSON after successful extraction
-            exportData(data);
+            // Auto-download JSON after successful extraction (if enabled)
+            if (currentSettings.autoDownload) {
+                exportData(data);
+            }
         }
     }
 }
@@ -1116,17 +1163,19 @@ function displayAllWeeksResults() {
         closeBtn.onclick = () => closeAllZoomTabs();
     }
 
-    // Auto-download combined JSON
-    if (totalRecordings > 0) {
+    // Auto-download combined JSON (if enabled)
+    if (totalRecordings > 0 && currentSettings.autoDownload) {
         exportAllWeeksData();
     }
 
-    // Show final notification
-    browser.runtime.sendMessage({
-        action: 'show-notification',
-        title: 'Extraction Complete',
-        message: `Extracted ${totalRecordings} recordings from ${weekNumbers.length} weeks`
-    });
+    // Show final notification (if enabled)
+    if (currentSettings.showNotifications) {
+        browser.runtime.sendMessage({
+            action: 'show-notification',
+            title: 'Extraction Complete',
+            message: `Extracted ${totalRecordings} recordings from ${weekNumbers.length} weeks`
+        });
+    }
 }
 
 // Export all weeks data as combined JSON
@@ -1142,14 +1191,22 @@ function exportAllWeeksData() {
         totalRecordings += weekData.length;
     });
 
-    const combinedData = {
-        extractionDate: dateStr,
-        extractionDay: dayName,
-        periodo: periodo,
-        totalRecordings: totalRecordings,
-        totalWeeks: Object.keys(allWeeksData).length,
-        weeks: allWeeksData
-    };
+    let combinedData;
+
+    // Check if metadata should be included
+    if (currentSettings.includeMetadata) {
+        combinedData = {
+            extractionDate: dateStr,
+            extractionDay: dayName,
+            periodo: periodo,
+            totalRecordings: totalRecordings,
+            totalWeeks: Object.keys(allWeeksData).length,
+            weeks: allWeeksData
+        };
+    } else {
+        // Just the raw data
+        combinedData = allWeeksData;
+    }
 
     const jsonData = JSON.stringify(combinedData, null, 2);
     const blob = new Blob([jsonData], { type: 'application/json' });
@@ -1193,12 +1250,14 @@ function exportData(data) {
     URL.revokeObjectURL(url);
     updateDebugPanel(`Data exported as: ${filename}`);
 
-    // Show final notification for single week mode
-    browser.runtime.sendMessage({
-        action: 'show-notification',
-        title: 'Extraction Complete',
-        message: `Extracted ${data.length} recordings from week ${weekNumber}`
-    });
+    // Show final notification for single week mode (if enabled)
+    if (currentSettings.showNotifications) {
+        browser.runtime.sendMessage({
+            action: 'show-notification',
+            title: 'Extraction Complete',
+            message: `Extracted ${data.length} recordings from week ${weekNumber}`
+        });
+    }
 }
 
 // Close all Zoom tabs

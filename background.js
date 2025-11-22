@@ -3,6 +3,35 @@
  * Handles commands, notifications, and tab tracking
  */
 
+// Default settings
+const DEFAULT_SETTINGS = {
+    autoDownload: true,
+    includeMetadata: true,
+    autoCloseTabs: true,
+    autoCloseWeekTabs: true,
+    showNotifications: true,
+    debugMode: false
+};
+
+// Current settings
+let currentSettings = { ...DEFAULT_SETTINGS };
+
+// Load settings from storage
+async function loadSettings() {
+    try {
+        const result = await browser.storage.local.get('utecExtractorSettings');
+        if (result.utecExtractorSettings) {
+            currentSettings = { ...DEFAULT_SETTINGS, ...result.utecExtractorSettings };
+        }
+        console.log('Background: Settings loaded', currentSettings);
+    } catch (error) {
+        console.error('Error loading settings:', error);
+    }
+}
+
+// Load settings on startup
+loadSettings();
+
 // Store captured recording URLs with timestamps
 let capturedRecordings = [];
 let activeExtractionTabId = null;
@@ -100,8 +129,8 @@ function checkAndCaptureRecordingURL(tab) {
                 }).catch(console.error);
             }
             
-            // Close the tab after capturing the URL
-            if (tab.id && tab.id !== activeExtractionTabId) {
+            // Close the tab after capturing the URL (if enabled in settings)
+            if (currentSettings.autoCloseTabs && tab.id && tab.id !== activeExtractionTabId) {
                 setTimeout(() => {
                     browser.tabs.remove(tab.id).then(() => {
                         console.log('Closed tab:', tab.id);
@@ -154,14 +183,23 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     console.log('Background received message:', message.action);
     
     if (message.action === 'show-notification') {
-        browser.notifications.create({
-            type: 'basic',
-            iconUrl: 'icon48.png',
-            title: message.title,
-            message: message.message
-        });
+        // Only show notification if enabled in settings
+        if (currentSettings.showNotifications) {
+            browser.notifications.create({
+                type: 'basic',
+                iconUrl: 'icon48.png',
+                title: message.title,
+                message: message.message
+            });
+        }
         sendResponse({ success: true });
-        
+
+    } else if (message.action === 'settings-updated') {
+        // Update settings when popup changes them
+        currentSettings = { ...DEFAULT_SETTINGS, ...message.settings };
+        console.log('Background: Settings updated', currentSettings);
+        sendResponse({ success: true });
+
     } else if (message.action === 'expect-recording') {
         // Store the expected recording data for the next URL capture
         expectedRecording = message.expectedData;
@@ -343,15 +381,17 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const spawnedTabs = recursiveExtractionState.spawnedTabs;
         const originalTabId = recursiveExtractionState.originalTabId;
 
-        // Close all spawned tabs EXCEPT the original
-        const tabsToClose = spawnedTabs
-            .filter(t => t.tabId !== originalTabId)
-            .map(t => t.tabId);
+        // Close all spawned tabs EXCEPT the original (if enabled in settings)
+        if (currentSettings.autoCloseWeekTabs) {
+            const tabsToClose = spawnedTabs
+                .filter(t => t.tabId !== originalTabId)
+                .map(t => t.tabId);
 
-        if (tabsToClose.length > 0) {
-            browser.tabs.remove(tabsToClose).then(() => {
-                console.log(`Closed ${tabsToClose.length} spawned tabs`);
-            }).catch(console.error);
+            if (tabsToClose.length > 0) {
+                browser.tabs.remove(tabsToClose).then(() => {
+                    console.log(`Closed ${tabsToClose.length} spawned tabs`);
+                }).catch(console.error);
+            }
         }
 
         // Send final results to original tab
@@ -445,15 +485,17 @@ function startNextExtraction() {
             const spawnedTabs = recursiveExtractionState.spawnedTabs;
             const originalTabId = recursiveExtractionState.originalTabId;
 
-            // Close all spawned tabs EXCEPT the original
-            const tabsToClose = spawnedTabs
-                .filter(t => t.tabId !== originalTabId)
-                .map(t => t.tabId);
+            // Close all spawned tabs EXCEPT the original (if enabled in settings)
+            if (currentSettings.autoCloseWeekTabs) {
+                const tabsToClose = spawnedTabs
+                    .filter(t => t.tabId !== originalTabId)
+                    .map(t => t.tabId);
 
-            if (tabsToClose.length > 0) {
-                browser.tabs.remove(tabsToClose).then(() => {
-                    console.log(`Closed ${tabsToClose.length} spawned tabs`);
-                }).catch(console.error);
+                if (tabsToClose.length > 0) {
+                    browser.tabs.remove(tabsToClose).then(() => {
+                        console.log(`Closed ${tabsToClose.length} spawned tabs`);
+                    }).catch(console.error);
+                }
             }
 
             // Send final results to original tab

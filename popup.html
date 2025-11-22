@@ -5,178 +5,520 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>UTEC Conference Extractor</title>
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
-            width: 300px;
-            padding: 20px;
+            width: 340px;
+            padding: 0;
             margin: 0;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: #f5f5f5;
         }
-        
+
         .header {
+            background: linear-gradient(135deg, #007acc 0%, #005a9e 100%);
+            color: white;
+            padding: 16px 20px;
             text-align: center;
-            margin-bottom: 20px;
         }
-        
+
         .header h1 {
             font-size: 18px;
-            margin: 0 0 5px 0;
-            color: #333;
+            margin: 0 0 4px 0;
+            font-weight: 600;
         }
-        
+
         .header .subtitle {
             font-size: 12px;
-            color: #666;
+            opacity: 0.9;
             margin: 0;
         }
-        
-        .status {
+
+        /* Tab Navigation */
+        .tab-nav {
+            display: flex;
+            background: white;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 12px 16px;
+            border: none;
+            background: transparent;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            color: #666;
+            transition: all 0.2s;
+            position: relative;
+        }
+
+        .tab-btn:hover {
+            background: #f5f5f5;
+            color: #333;
+        }
+
+        .tab-btn.active {
+            color: #007acc;
+            background: #f0f7ff;
+        }
+
+        .tab-btn.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: #007acc;
+        }
+
+        .tab-btn svg {
+            width: 16px;
+            height: 16px;
+            margin-right: 6px;
+            vertical-align: middle;
+        }
+
+        /* Tab Content */
+        .tab-content {
+            display: none;
+            padding: 16px;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Status Card */
+        .status-card {
             background: white;
             border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
+            padding: 14px;
+            margin-bottom: 14px;
             border-left: 4px solid #007acc;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         }
-        
+
         .status-item {
             display: flex;
             justify-content: space-between;
+            align-items: center;
             margin-bottom: 8px;
         }
-        
+
         .status-item:last-child {
             margin-bottom: 0;
         }
-        
+
         .status-label {
-            font-size: 13px;
+            font-size: 12px;
             color: #666;
         }
-        
+
         .status-value {
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 600;
             color: #333;
         }
-        
+
         .status-value.active {
             color: #007acc;
         }
-        
-        .instructions {
+
+        /* Alert boxes */
+        .alert {
+            border-radius: 6px;
+            padding: 10px 12px;
+            margin-bottom: 14px;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+
+        .alert-warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+        }
+
+        /* Mode Cards */
+        .mode-card {
             background: white;
             border-radius: 8px;
-            padding: 15px;
-            margin-bottom: 15px;
+            padding: 14px;
+            margin-bottom: 12px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         }
-        
-        .instructions h3 {
-            margin: 0 0 10px 0;
+
+        .mode-card h3 {
+            margin: 0 0 8px 0;
             font-size: 14px;
-            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 6px;
         }
-        
-        .instructions ol {
+
+        .mode-card p {
             margin: 0;
-            padding-left: 20px;
             font-size: 12px;
             color: #666;
             line-height: 1.4;
         }
-        
-        .instructions li {
-            margin-bottom: 5px;
+
+        .mode-shortcut {
+            border-left: 3px solid #28a745;
         }
-        
-        .hotkey {
+
+        .mode-shortcut h3 {
+            color: #28a745;
+        }
+
+        .mode-manual {
+            border-left: 3px solid #007acc;
+        }
+
+        .mode-manual h3 {
+            color: #007acc;
+        }
+
+        /* Buttons */
+        .btn {
+            display: block;
+            width: 100%;
+            padding: 12px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 10px;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
             background: #007acc;
             color: white;
-            padding: 8px 12px;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #005a9e;
+        }
+
+        .btn-success {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: #218838;
+        }
+
+        .shortcut-display {
+            background: linear-gradient(135deg, #28a745 0%, #20863d 100%);
+            color: white;
+            padding: 10px 14px;
             border-radius: 6px;
             text-align: center;
             font-weight: 600;
-            font-size: 14px;
+            font-size: 13px;
             font-family: 'Courier New', monospace;
         }
-        
+
+        /* Settings Styles */
+        .settings-section {
+            background: white;
+            border-radius: 8px;
+            margin-bottom: 14px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+            overflow: hidden;
+        }
+
+        .settings-section-header {
+            padding: 12px 14px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #e9ecef;
+            font-size: 12px;
+            font-weight: 600;
+            color: #495057;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .setting-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 14px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .setting-item:last-child {
+            border-bottom: none;
+        }
+
+        .setting-info {
+            flex: 1;
+            padding-right: 12px;
+        }
+
+        .setting-label {
+            font-size: 13px;
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 2px;
+        }
+
+        .setting-desc {
+            font-size: 11px;
+            color: #888;
+            line-height: 1.3;
+        }
+
+        /* Toggle Switch */
+        .toggle {
+            position: relative;
+            width: 44px;
+            height: 24px;
+            flex-shrink: 0;
+        }
+
+        .toggle input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: 0.3s;
+            border-radius: 24px;
+        }
+
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 18px;
+            width: 18px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: 0.3s;
+            border-radius: 50%;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+        }
+
+        .toggle input:checked + .toggle-slider {
+            background-color: #007acc;
+        }
+
+        .toggle input:checked + .toggle-slider:before {
+            transform: translateX(20px);
+        }
+
+        /* Footer */
         .footer {
             text-align: center;
+            padding: 12px 16px;
             font-size: 11px;
             color: #999;
-            margin-top: 15px;
+            background: #f8f9fa;
+            border-top: 1px solid #e9ecef;
         }
-        
-        .warning {
-            background: #fff3cd;
-            border: 1px solid #ffeaa7;
-            border-radius: 6px;
-            padding: 10px;
-            margin-bottom: 15px;
-            font-size: 12px;
-            color: #856404;
+
+        .footer a {
+            color: #007acc;
+            text-decoration: none;
         }
-        
-        .success {
-            background: #d4edda;
-            border: 1px solid #c3e6cb;
-            border-radius: 6px;
-            padding: 10px;
-            margin-bottom: 15px;
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+
+        /* Reset button */
+        .btn-link {
+            background: none;
+            border: none;
+            color: #007acc;
+            cursor: pointer;
             font-size: 12px;
-            color: #155724;
+            padding: 8px 0;
+            text-decoration: underline;
+        }
+
+        .btn-link:hover {
+            color: #005a9e;
+        }
+
+        .settings-footer {
+            text-align: center;
+            padding: 10px 14px;
         }
     </style>
 </head>
 <body>
     <div class="header">
-        <h1>🔍 UTEC Extractor</h1>
+        <h1>UTEC Extractor</h1>
         <p class="subtitle">Conference Link Extraction Tool</p>
     </div>
 
-    <div class="status">
-        <div class="status-item">
-            <span class="status-label">Current Page:</span>
-            <span class="status-value" id="current-domain">Loading...</span>
+    <div class="tab-nav">
+        <button class="tab-btn active" data-tab="main">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path>
+                <polyline points="9 22 9 12 15 12 15 22"></polyline>
+            </svg>
+            Main
+        </button>
+        <button class="tab-btn" data-tab="settings">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="3"></circle>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+            </svg>
+            Settings
+        </button>
+    </div>
+
+    <!-- Main Tab -->
+    <div id="tab-main" class="tab-content active">
+        <div class="status-card">
+            <div class="status-item">
+                <span class="status-label">Current Page:</span>
+                <span class="status-value" id="current-domain">Loading...</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Extension Status:</span>
+                <span class="status-value active" id="extension-status">Ready</span>
+            </div>
         </div>
-        <div class="status-item">
-            <span class="status-label">Extension Status:</span>
-            <span class="status-value active" id="extension-status">Ready</span>
+
+        <div id="page-status"></div>
+
+        <div class="mode-card mode-shortcut">
+            <h3>Shortcut Mode</h3>
+            <p>Press <strong>Ctrl+Shift+L</strong> for automatic full extraction (all weeks using tab duplication)</p>
+        </div>
+
+        <div class="mode-card mode-manual">
+            <h3>Manual Mode</h3>
+            <p>Choose to extract single week or all weeks with the button below</p>
+        </div>
+
+        <button id="start-extraction" class="btn btn-primary">
+            Start Extraction (Choose Mode)
+        </button>
+
+        <div class="shortcut-display">
+            Ctrl + Shift + L
         </div>
     </div>
 
-    <div id="page-status"></div>
-
-    <div class="instructions">
-        <h3>📋 Extraction Modes:</h3>
-        <div style="margin-bottom: 10px;">
-            <strong style="color: #28a745;">Shortcut (Ctrl+Shift+L):</strong>
-            <p style="margin: 5px 0; font-size: 12px; color: #666;">
-                Automatic full extraction - extracts ALL weeks (current → week 1) using tab duplication
-            </p>
+    <!-- Settings Tab -->
+    <div id="tab-settings" class="tab-content">
+        <div class="settings-section">
+            <div class="settings-section-header">Export Options</div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <div class="setting-label">Auto-download JSON</div>
+                    <div class="setting-desc">Automatically download the JSON file after extraction completes</div>
+                </div>
+                <label class="toggle">
+                    <input type="checkbox" id="setting-auto-download" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <div class="setting-label">Include metadata</div>
+                    <div class="setting-desc">Include extraction date, day name, and periodo in JSON export</div>
+                </div>
+                <label class="toggle">
+                    <input type="checkbox" id="setting-include-metadata" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
         </div>
-        <div>
-            <strong style="color: #007acc;">Manual Mode:</strong>
-            <p style="margin: 5px 0; font-size: 12px; color: #666;">
-                Click the button below to choose single week or all weeks extraction
-            </p>
+
+        <div class="settings-section">
+            <div class="settings-section-header">Tab Behavior</div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <div class="setting-label">Auto-close Zoom tabs</div>
+                    <div class="setting-desc">Automatically close Zoom recording tabs after capturing URLs</div>
+                </div>
+                <label class="toggle">
+                    <input type="checkbox" id="setting-auto-close-tabs" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <div class="setting-label">Auto-close week tabs</div>
+                    <div class="setting-desc">Close spawned week tabs after extraction (all-weeks mode)</div>
+                </div>
+                <label class="toggle">
+                    <input type="checkbox" id="setting-auto-close-week-tabs" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
         </div>
-    </div>
 
-    <button id="start-extraction" class="hotkey" style="
-        cursor: pointer;
-        border: none;
-        width: 100%;
-        margin-bottom: 10px;
-    ">
-        Start Extraction (Choose Mode)
-    </button>
+        <div class="settings-section">
+            <div class="settings-section-header">Notifications</div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <div class="setting-label">Show notifications</div>
+                    <div class="setting-desc">Display browser notifications when extraction completes</div>
+                </div>
+                <label class="toggle">
+                    <input type="checkbox" id="setting-show-notifications" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
 
-    <div class="hotkey" style="background: #28a745;">
-        Shortcut: Ctrl + Shift + L
+        <div class="settings-section">
+            <div class="settings-section-header">Advanced</div>
+            <div class="setting-item">
+                <div class="setting-info">
+                    <div class="setting-label">Debug mode</div>
+                    <div class="setting-desc">Show detailed extraction logs in console</div>
+                </div>
+                <label class="toggle">
+                    <input type="checkbox" id="setting-debug-mode">
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
+        </div>
+
+        <div class="settings-footer">
+            <button class="btn-link" id="reset-settings">Reset to defaults</button>
+        </div>
     </div>
 
     <div class="footer">
-        Version 1.2.0 | Tab Duplication Mode
+        Version 1.3.0 | <a href="#" id="help-link">Help</a>
     </div>
 
     <script src="popup.js"></script>
