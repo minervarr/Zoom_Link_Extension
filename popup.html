@@ -375,6 +375,61 @@
             text-align: center;
             padding: 10px 14px;
         }
+
+        /* Number inputs for week range */
+        .week-range-container {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .week-input {
+            width: 60px;
+            padding: 6px 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 13px;
+            text-align: center;
+        }
+
+        .week-input:focus {
+            outline: none;
+            border-color: #007acc;
+            box-shadow: 0 0 0 2px rgba(0, 122, 204, 0.1);
+        }
+
+        .week-range-label {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .setting-item-vertical {
+            display: flex;
+            flex-direction: column;
+            padding: 12px 14px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .setting-item-vertical .setting-info {
+            padding-right: 0;
+            margin-bottom: 10px;
+        }
+
+        .week-range-toggle {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+
+        .week-range-inputs {
+            display: none;
+            padding-top: 8px;
+        }
+
+        .week-range-inputs.active {
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -485,6 +540,33 @@
         </div>
 
         <div class="settings-section">
+            <div class="settings-section-header">Week Range</div>
+            <div class="setting-item-vertical">
+                <div class="week-range-toggle">
+                    <div class="setting-info">
+                        <div class="setting-label">Custom week range</div>
+                        <div class="setting-desc">Limit extraction to specific weeks instead of all weeks</div>
+                    </div>
+                    <label class="toggle">
+                        <input type="checkbox" id="setting-use-week-range">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <div class="week-range-inputs" id="week-range-inputs">
+                    <div class="week-range-container">
+                        <span class="week-range-label">From week</span>
+                        <input type="number" id="setting-week-from" class="week-input" min="1" max="20" value="15">
+                        <span class="week-range-label">to week</span>
+                        <input type="number" id="setting-week-to" class="week-input" min="1" max="20" value="1">
+                    </div>
+                    <div class="setting-desc" style="margin-top: 8px; font-style: italic;">
+                        Example: "From 15 to 13" extracts weeks 15, 14, and 13
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="settings-section">
             <div class="settings-section-header">Notifications</div>
             <div class="setting-item">
                 <div class="setting-info">
@@ -518,7 +600,7 @@
     </div>
 
     <div class="footer">
-        Version 1.3.0 | <a href="#" id="help-link">Help</a>
+        Version 1.5.0 | <a href="#" id="help-link">Help</a>
     </div>
 
     <script src="popup.js"></script>

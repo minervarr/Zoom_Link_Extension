@@ -10,7 +10,10 @@ const DEFAULT_SETTINGS = {
     autoCloseTabs: true,
     autoCloseWeekTabs: true,
     showNotifications: true,
-    debugMode: false
+    debugMode: false,
+    useWeekRange: false,
+    weekFrom: 15,
+    weekTo: 1
 };
 
 // Current settings
@@ -122,6 +125,18 @@ function showModeSelectionPanel() {
     const weekNumber = getWeekNumber();
     periodo = getPeriodo();
 
+    // Determine the week range for extraction
+    let startWeek, endWeek, rangeText;
+    if (currentSettings.useWeekRange) {
+        startWeek = currentSettings.weekFrom;
+        endWeek = currentSettings.weekTo;
+        rangeText = `Extract Weeks ${startWeek} → ${endWeek}`;
+    } else {
+        startWeek = weekNumber;
+        endWeek = 1;
+        rangeText = `Extract All Weeks (${weekNumber} → 1)`;
+    }
+
     debugPanel = document.createElement('div');
     debugPanel.id = 'utec-debug-panel';
     debugPanel.innerHTML = `
@@ -159,6 +174,11 @@ function showModeSelectionPanel() {
                 <p style="margin: 0 0 10px 0; color: #666;">
                     Periodo: <strong>${periodo}</strong> | Week: <strong>${weekNumber || 'Unknown'}</strong>
                 </p>
+                ${currentSettings.useWeekRange ? `
+                <p style="margin: 0 0 10px 0; color: #28a745; font-size: 12px;">
+                    Custom range: Week ${startWeek} → ${endWeek}
+                </p>
+                ` : ''}
                 <button id="extract-single" style="
                     background: #007acc;
                     color: white;
@@ -179,7 +199,7 @@ function showModeSelectionPanel() {
                     cursor: pointer;
                     width: 100%;
                     font-size: 14px;
-                ">Extract All Weeks (${weekNumber} → 1)</button>
+                ">${rangeText}</button>
             </div>
         </div>
     `;
@@ -263,8 +283,8 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     } else if (message.action === 'navigate-to-previous-week') {
         // Phase 1: This is a spawned tab - click Anterior multiple times to reach target week
-        console.log('Received navigate-to-previous-week command, target:', message.targetWeek, 'clicks needed:', message.anteriorClicks);
-        navigateToPreviousWeek(message.targetWeek, message.anteriorClicks, message.startWeek);
+        console.log('Received navigate-to-previous-week command, target:', message.targetWeek, 'clicks needed:', message.anteriorClicks, 'endWeek:', message.endWeek);
+        navigateToPreviousWeek(message.targetWeek, message.anteriorClicks, message.startWeek, message.endWeek || 1);
 
     } else if (message.action === 'extraction-phase-starting') {
         // Phase 2 starting - update UI
@@ -583,40 +603,57 @@ async function startAutomaticRecursiveExtraction() {
     const currentWeek = getWeekNumber();
     periodo = getPeriodo();
 
-    console.log('Starting automatic recursive extraction from week', currentWeek);
+    // Determine start and end weeks based on settings
+    let startWeek, endWeek;
+    if (currentSettings.useWeekRange) {
+        startWeek = currentSettings.weekFrom;
+        endWeek = currentSettings.weekTo;
+        // Ensure startWeek >= endWeek (we go backwards)
+        if (startWeek < endWeek) {
+            [startWeek, endWeek] = [endWeek, startWeek];
+        }
+    } else {
+        startWeek = currentWeek;
+        endWeek = 1;
+    }
+
+    console.log('Starting automatic recursive extraction from week', startWeek, 'to week', endWeek);
 
     // Show progress panel
-    showAutomaticExtractionPanel(currentWeek);
+    showAutomaticExtractionPanel(startWeek, endWeek);
 
     // Initialize recursive extraction state in background
     await browser.runtime.sendMessage({
         action: 'start-recursive-extraction',
-        currentWeek: currentWeek,
+        currentWeek: startWeek,
+        endWeek: endWeek,
+        actualCurrentWeek: currentWeek,
         periodo: periodo
     });
 
-    updateAutomaticExtractionStatus(`Phase 1: Duplicating tabs from week ${currentWeek} to week 1...`);
+    updateAutomaticExtractionStatus(`Phase 1: Duplicating tabs from week ${startWeek} to week ${endWeek}...`);
 
-    // If we're already at week 1, go straight to extraction
-    if (currentWeek <= 1) {
-        updateAutomaticExtractionStatus('Already at week 1, starting extraction...');
+    // If start week equals end week, just extract single week
+    if (startWeek <= endWeek) {
+        updateAutomaticExtractionStatus(`Already at target week ${endWeek}, starting extraction...`);
         await browser.runtime.sendMessage({ action: 'all-tabs-ready' });
         return;
     }
 
     // Start duplicating - request background to duplicate this tab
-    updateAutomaticExtractionStatus(`Creating tab for week ${currentWeek - 1}...`);
+    updateAutomaticExtractionStatus(`Creating tab for week ${startWeek - 1}...`);
     await browser.runtime.sendMessage({
         action: 'duplicate-tab-for-next-week',
-        currentWeek: currentWeek
+        currentWeek: startWeek,
+        endWeek: endWeek
     });
 }
 
 // Phase 1: Navigate to previous week (called on spawned tabs)
 // Duplicated tabs always reset to the current university week, so we need to
 // click Anterior multiple times to reach the target week
-async function navigateToPreviousWeek(targetWeek, anteriorClicks, startWeek) {
-    console.log('Navigating to week', targetWeek, '- clicking Anterior', anteriorClicks, 'time(s)');
+async function navigateToPreviousWeek(targetWeek, anteriorClicks, startWeek, endWeek = 1) {
+    console.log('Navigating to week', targetWeek, '- clicking Anterior', anteriorClicks, 'time(s)', '(end week:', endWeek, ')');
 
     // Wait for page to fully load (Anterior button can take 5+ seconds to appear)
     console.log('Waiting for page to load (Anterior button)...');
@@ -666,16 +703,17 @@ async function navigateToPreviousWeek(targetWeek, anteriorClicks, startWeek) {
         weekNumber: actualWeek
     });
 
-    // If we need to continue duplicating (actualWeek > 1)
-    if (actualWeek > 1) {
+    // If we need to continue duplicating (actualWeek > endWeek)
+    if (actualWeek > endWeek) {
         // Duplicate this tab for the next week
         await browser.runtime.sendMessage({
             action: 'duplicate-tab-for-next-week',
-            currentWeek: actualWeek
+            currentWeek: actualWeek,
+            endWeek: endWeek
         });
     } else {
-        // We've reached week 1, all tabs are ready
-        console.log('Reached week 1! All tabs ready.');
+        // We've reached the end week, all tabs are ready
+        console.log('Reached end week', endWeek, '! All tabs ready.');
         await browser.runtime.sendMessage({ action: 'all-tabs-ready' });
     }
 }
@@ -826,7 +864,7 @@ async function waitForAnteriorButton(timeoutMs = 10000) {
 
 
 // Show automatic extraction panel
-function showAutomaticExtractionPanel(startWeek) {
+function showAutomaticExtractionPanel(startWeek, endWeek = 1) {
     if (debugPanel) debugPanel.remove();
 
     debugPanel = document.createElement('div');
@@ -856,7 +894,7 @@ function showAutomaticExtractionPanel(startWeek) {
                 align-items: center;
             ">
                 <span>Automatic Extraction</span>
-                <span style="font-size: 12px;">Week ${startWeek} → 1</span>
+                <span style="font-size: 12px;">Week ${startWeek} → ${endWeek}</span>
             </div>
             <div id="extraction-status" style="
                 padding: 15px;

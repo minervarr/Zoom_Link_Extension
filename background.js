@@ -263,11 +263,13 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
             spawnedTabs: [{ tabId: sender.tab.id, weekNumber: message.currentWeek }],
             allRecordings: {},
             startWeek: message.currentWeek,
+            endWeek: message.endWeek || 1,  // Support custom end week
+            actualCurrentWeek: message.actualCurrentWeek || message.currentWeek,
             periodo: message.periodo,
             extractionQueue: [],
             currentExtractingTab: null
         };
-        console.log('Started recursive extraction - Phase 1: Duplicating from week', message.currentWeek);
+        console.log('Started recursive extraction - Phase 1: Duplicating from week', message.currentWeek, 'to week', message.endWeek || 1);
         sendResponse({ success: true });
 
     } else if (message.action === 'duplicate-tab-for-next-week') {
@@ -275,12 +277,13 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const currentTabId = sender.tab.id;
         const currentWeek = message.currentWeek;
         const targetWeek = currentWeek - 1;
+        const endWeek = message.endWeek || recursiveExtractionState.endWeek || 1;
         // Calculate how many Anterior clicks needed from the starting week
         // (duplicated tabs always reset to the starting week)
-        const anteriorClicks = recursiveExtractionState.startWeek - targetWeek;
+        const anteriorClicks = recursiveExtractionState.actualCurrentWeek - targetWeek;
 
         browser.tabs.duplicate(currentTabId).then((newTab) => {
-            console.log('Duplicated tab:', newTab.id, 'for week', targetWeek, '- needs', anteriorClicks, 'Anterior clicks');
+            console.log('Duplicated tab:', newTab.id, 'for week', targetWeek, '- needs', anteriorClicks, 'Anterior clicks (endWeek:', endWeek, ')');
 
             // Wait for the tab to be ready, then tell it to click Anterior
             // Note: The content script will wait for the Anterior button to appear (can take 5+ seconds)
@@ -293,7 +296,8 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
                                 action: 'navigate-to-previous-week',
                                 targetWeek: targetWeek,
                                 anteriorClicks: anteriorClicks,
-                                startWeek: recursiveExtractionState.startWeek
+                                startWeek: recursiveExtractionState.startWeek,
+                                endWeek: endWeek
                             }).catch((err) => {
                                 console.error('Failed to send navigate message:', err);
                                 if (retries < 10) {

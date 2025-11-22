@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "UTEC Conference Link Extractor",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Extract conference links from UTEC platform with configurable settings",
 
   "permissions": [

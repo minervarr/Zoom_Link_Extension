@@ -10,7 +10,10 @@ const DEFAULT_SETTINGS = {
     autoCloseTabs: true,
     autoCloseWeekTabs: true,
     showNotifications: true,
-    debugMode: false
+    debugMode: false,
+    useWeekRange: false,
+    weekFrom: 15,
+    weekTo: 1
 };
 
 // Current settings
@@ -99,6 +102,19 @@ function updateSettingsUI() {
     document.getElementById('setting-auto-close-week-tabs').checked = currentSettings.autoCloseWeekTabs;
     document.getElementById('setting-show-notifications').checked = currentSettings.showNotifications;
     document.getElementById('setting-debug-mode').checked = currentSettings.debugMode;
+
+    // Week range settings
+    document.getElementById('setting-use-week-range').checked = currentSettings.useWeekRange;
+    document.getElementById('setting-week-from').value = currentSettings.weekFrom;
+    document.getElementById('setting-week-to').value = currentSettings.weekTo;
+
+    // Show/hide week range inputs based on toggle
+    const weekRangeInputs = document.getElementById('week-range-inputs');
+    if (currentSettings.useWeekRange) {
+        weekRangeInputs.classList.add('active');
+    } else {
+        weekRangeInputs.classList.remove('active');
+    }
 }
 
 /**
@@ -141,6 +157,34 @@ function setupSettingsListeners() {
         saveSettings();
     });
 
+    // Week range toggle
+    document.getElementById('setting-use-week-range').addEventListener('change', (e) => {
+        currentSettings.useWeekRange = e.target.checked;
+        const weekRangeInputs = document.getElementById('week-range-inputs');
+        if (e.target.checked) {
+            weekRangeInputs.classList.add('active');
+        } else {
+            weekRangeInputs.classList.remove('active');
+        }
+        saveSettings();
+    });
+
+    // Week from input
+    document.getElementById('setting-week-from').addEventListener('change', (e) => {
+        const value = parseInt(e.target.value) || 15;
+        currentSettings.weekFrom = Math.max(1, Math.min(20, value));
+        e.target.value = currentSettings.weekFrom;
+        saveSettings();
+    });
+
+    // Week to input
+    document.getElementById('setting-week-to').addEventListener('change', (e) => {
+        const value = parseInt(e.target.value) || 1;
+        currentSettings.weekTo = Math.max(1, Math.min(20, value));
+        e.target.value = currentSettings.weekTo;
+        saveSettings();
+    });
+
     // Reset settings
     document.getElementById('reset-settings').addEventListener('click', async () => {
         currentSettings = { ...DEFAULT_SETTINGS };
@@ -160,7 +204,7 @@ function setupSettingsListeners() {
     document.getElementById('help-link').addEventListener('click', (e) => {
         e.preventDefault();
         // Switch to main tab and show help info
-        alert('UTEC Extractor v1.3.0\n\nShortcuts:\n• Ctrl+Shift+L: Full automatic extraction\n\nModes:\n• Single Week: Extract current week only\n• All Weeks: Extract all weeks (1 to current)\n\nSettings:\n• Configure auto-download, notifications, and tab behavior in the Settings tab.');
+        alert('UTEC Extractor v1.5.0\n\nShortcuts:\n• Ctrl+Shift+L: Full automatic extraction\n\nModes:\n• Single Week: Extract current week only\n• All Weeks: Extract all weeks (or custom range)\n\nWeek Range:\n• Enable "Custom week range" in Settings\n• Set "From" and "To" weeks (e.g., 15 to 13)\n\nSettings:\n• Configure auto-download, notifications, tab behavior, and week range.');
     });
 }
 
