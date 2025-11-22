@@ -87,14 +87,6 @@ function checkAndCaptureRecordingURL(tab) {
                 }).catch(console.error);
             }
             
-            // Show notification
-            browser.notifications.create({
-                type: 'basic',
-                iconUrl: 'icon48.png',
-                title: 'Recording Captured',
-                message: `Captured: ${recording.subject}`
-            });
-            
             // Close the tab after capturing the URL
             if (tab.id && tab.id !== activeExtractionTabId) {
                 setTimeout(() => {
@@ -136,22 +128,9 @@ browser.commands.onCommand.addListener((command) => {
                     console.log('Message sent successfully');
                 }).catch((error) => {
                     console.error('Failed to send message to content script:', error);
-                    // Show notification if content script not ready
-                    browser.notifications.create({
-                        type: 'basic',
-                        iconUrl: 'icon48.png',
-                        title: 'UTEC Extractor',
-                        message: 'Please refresh the page and try again'
-                    });
                 });
             } else {
-                // Show notification that we're not on the right domain
-                browser.notifications.create({
-                    type: 'basic',
-                    iconUrl: 'icon48.png',
-                    title: 'UTEC Extractor',
-                    message: 'Please navigate to a UTEC page first'
-                });
+                console.log('Not on UTEC domain');
             }
         });
     }
@@ -232,14 +211,6 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
 browser.runtime.onInstalled.addListener((details) => {
     if (details.reason === 'install') {
         console.log('UTEC Conference Link Extractor installed');
-        
-        // Show welcome notification
-        browser.notifications.create({
-            type: 'basic',
-            iconUrl: 'icon48.png',
-            title: 'UTEC Extractor Installed',
-            message: 'Use Ctrl+Shift+L on UTEC pages to extract links'
-        });
     }
 });
 

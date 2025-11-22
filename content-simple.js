@@ -29,12 +29,180 @@ function init() {
 // Store extracted conference data
 let extractedData = [];
 let debugPanel = null;
+let allWeeksData = {}; // For recursive mode: { weekNumber: [recordings] }
+let isRecursiveMode = false;
+let periodo = ''; // Store periodo for export
+
+// Show error panel
+function showErrorPanel(message) {
+    if (debugPanel) debugPanel.remove();
+
+    debugPanel = document.createElement('div');
+    debugPanel.id = 'utec-debug-panel';
+    debugPanel.innerHTML = `
+        <div style="
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            width: 350px;
+            background: white;
+            border: 2px solid #dc3545;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 999999;
+            font-family: Arial, sans-serif;
+        ">
+            <div style="
+                background: #dc3545;
+                color: white;
+                padding: 10px;
+                font-weight: bold;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            ">
+                <span>Error</span>
+                <button onclick="this.closest('#utec-debug-panel').remove()" style="
+                    background: none;
+                    border: none;
+                    color: white;
+                    font-size: 20px;
+                    cursor: pointer;
+                ">×</button>
+            </div>
+            <div style="padding: 15px;">
+                <p style="margin: 0; color: #dc3545;">${message}</p>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(debugPanel);
+}
+
+// Show mode selection panel
+function showModeSelectionPanel() {
+    if (debugPanel) debugPanel.remove();
+
+    const weekNumber = getWeekNumber();
+    periodo = getPeriodo();
+
+    debugPanel = document.createElement('div');
+    debugPanel.id = 'utec-debug-panel';
+    debugPanel.innerHTML = `
+        <div style="
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            width: 350px;
+            background: white;
+            border: 2px solid #007acc;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            z-index: 999999;
+            font-family: Arial, sans-serif;
+        ">
+            <div style="
+                background: #007acc;
+                color: white;
+                padding: 10px;
+                font-weight: bold;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+            ">
+                <span>UTEC Extractor</span>
+                <button onclick="this.closest('#utec-debug-panel').remove()" style="
+                    background: none;
+                    border: none;
+                    color: white;
+                    font-size: 20px;
+                    cursor: pointer;
+                ">×</button>
+            </div>
+            <div style="padding: 15px;">
+                <p style="margin: 0 0 10px 0; color: #666;">
+                    Periodo: <strong>${periodo}</strong> | Week: <strong>${weekNumber || 'Unknown'}</strong>
+                </p>
+                <button id="extract-single" style="
+                    background: #007acc;
+                    color: white;
+                    border: none;
+                    padding: 12px 16px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    width: 100%;
+                    margin-bottom: 10px;
+                    font-size: 14px;
+                ">Extract This Week Only</button>
+                <button id="extract-all" style="
+                    background: #28a745;
+                    color: white;
+                    border: none;
+                    padding: 12px 16px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    width: 100%;
+                    font-size: 14px;
+                ">Extract All Weeks (${weekNumber} → 1)</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(debugPanel);
+
+    // Add event listeners
+    document.getElementById('extract-single').onclick = () => {
+        isRecursiveMode = false;
+        allWeeksData = {};
+        performExtraction();
+    };
+
+    document.getElementById('extract-all').onclick = () => {
+        isRecursiveMode = true;
+        allWeeksData = {};
+        performExtraction();
+    };
+}
+
+// Get periodo from page
+function getPeriodo() {
+    const periodoInput = document.querySelector('input.form-control[disabled]');
+    if (periodoInput && periodoInput.value) {
+        return periodoInput.value;
+    }
+    // Alternative: look for periodo label
+    const inputs = document.querySelectorAll('input.form-control');
+    for (const input of inputs) {
+        if (input.value && input.value.match(/^\d{4}\s*-\s*\d$/)) {
+            return input.value;
+        }
+    }
+    return 'Unknown';
+}
+
+// Click "Anterior" button to go to previous week
+function clickAnteriorButton() {
+    const buttons = document.querySelectorAll('button.btn.btn-primary');
+    for (const btn of buttons) {
+        if (btn.textContent.trim() === 'Anterior') {
+            btn.click();
+            return true;
+        }
+    }
+    return false;
+}
 
 // Listen for messages from background script
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'extract-links') {
         console.log('Received extract-links command');
-        performExtraction();
+
+        // Check if we're on the correct page
+        if (!window.location.pathname.includes('/consulta-alumno')) {
+            showErrorPanel('Please navigate to the "Consulta Alumno" page first.');
+            return;
+        }
+
+        // Show mode selection panel
+        showModeSelectionPanel();
     } else if (message.action === 'recording-captured') {
         console.log('Recording captured:', message.recording);
         updateDebugPanel();
@@ -235,13 +403,14 @@ function getWeekNumber() {
 // Collect all captured recordings from background script
 async function collectCapturedRecordings() {
     try {
-        const response = await browser.runtime.sendMessage({ 
-            action: 'get-captured-recordings' 
+        const response = await browser.runtime.sendMessage({
+            action: 'get-captured-recordings'
         });
-        
+
         if (response && response.recordings) {
             const recordings = response.recordings;
-            
+            const currentWeek = getWeekNumber();
+
             // The recordings already have all the data
             const finalData = recordings.map((recording) => {
                 return {
@@ -260,13 +429,62 @@ async function collectCapturedRecordings() {
                     buttonId: recording.buttonId
                 };
             });
-            
-            displayResults(finalData);
+
+            if (isRecursiveMode) {
+                // Store this week's data
+                allWeeksData[currentWeek] = finalData;
+                updateDebugPanel(`Week ${currentWeek}: Captured ${finalData.length} recording(s)`);
+
+                // Check if we should continue to previous week
+                if (currentWeek > 1) {
+                    updateDebugPanel(`Moving to week ${currentWeek - 1}...`);
+
+                    // Click Anterior and wait for page update
+                    clickAnteriorButton();
+
+                    // Wait for page to update, then continue extraction
+                    await waitForWeekChange(currentWeek);
+
+                    // Clear recordings for next week and continue
+                    await browser.runtime.sendMessage({ action: 'clear-captured-recordings' });
+                    extractedData = [];
+
+                    // Continue with next week
+                    performExtraction();
+                } else {
+                    // We've reached week 1, display all results
+                    updateDebugPanel('All weeks extracted!');
+                    displayAllWeeksResults();
+                }
+            } else {
+                // Single week mode - just display results
+                displayResults(finalData);
+            }
         }
     } catch (error) {
         console.error('Error collecting recordings:', error);
         updateDebugPanel(`Error collecting recordings: ${error.message}`);
     }
+}
+
+// Wait for week to change after clicking Anterior
+async function waitForWeekChange(previousWeek) {
+    return new Promise((resolve) => {
+        const checkInterval = setInterval(() => {
+            const currentWeek = getWeekNumber();
+            if (currentWeek !== previousWeek) {
+                clearInterval(checkInterval);
+                // Additional wait for table to load
+                setTimeout(resolve, 1500);
+            }
+        }, 500);
+
+        // Timeout after 10 seconds
+        setTimeout(() => {
+            clearInterval(checkInterval);
+            resolve();
+        }, 10000);
+    });
 }
 
 // Show debug panel
@@ -435,7 +653,127 @@ function displayResults(data) {
     }
 }
 
-// Export data as JSON
+// Display results for all weeks (recursive mode)
+function displayAllWeeksResults() {
+    if (!debugPanel) return;
+
+    const content = debugPanel.querySelector('#debug-content');
+    const actions = debugPanel.querySelector('#debug-actions');
+
+    // Calculate totals
+    let totalRecordings = 0;
+    const weekNumbers = Object.keys(allWeeksData).map(Number).sort((a, b) => b - a);
+    weekNumbers.forEach(week => {
+        totalRecordings += allWeeksData[week].length;
+    });
+
+    if (content) {
+        content.innerHTML = `<h3 style="margin: 0 0 10px 0;">All Weeks Extracted!</h3>`;
+        content.innerHTML += `<p style="color: green;">Total: ${totalRecordings} recordings across ${weekNumbers.length} weeks</p>`;
+
+        weekNumbers.forEach(week => {
+            const weekData = allWeeksData[week];
+            content.innerHTML += `
+                <div style="
+                    margin: 8px 0;
+                    padding: 8px;
+                    background: #f5f5f5;
+                    border-radius: 4px;
+                    border-left: 3px solid #28a745;
+                ">
+                    <strong>Week ${week}</strong>: ${weekData.length} recording(s)
+                </div>
+            `;
+        });
+    }
+
+    if (actions && totalRecordings > 0) {
+        actions.style.display = 'block';
+        actions.innerHTML = `
+            <button id="export-json" style="
+                background: #28a745;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                cursor: pointer;
+                width: 48%;
+                margin-right: 4%;
+            ">Export All as JSON</button>
+            <button id="close-tabs" style="
+                background: #dc3545;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+                cursor: pointer;
+                width: 48%;
+            ">Close All Zoom Tabs</button>
+        `;
+
+        const exportBtn = actions.querySelector('#export-json');
+        const closeBtn = actions.querySelector('#close-tabs');
+
+        if (exportBtn) {
+            exportBtn.onclick = () => exportAllWeeksData();
+        }
+
+        if (closeBtn) {
+            closeBtn.onclick = () => closeAllZoomTabs();
+        }
+
+        // Auto-download combined JSON
+        exportAllWeeksData();
+    }
+
+    // Show final notification
+    browser.runtime.sendMessage({
+        action: 'show-notification',
+        title: 'Extraction Complete',
+        message: `Extracted ${totalRecordings} recordings from ${weekNumbers.length} weeks`
+    });
+}
+
+// Export all weeks data as combined JSON
+function exportAllWeeksData() {
+    const now = new Date();
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const dayName = dayNames[now.getDay()];
+    const dateStr = now.toISOString().split('T')[0];
+
+    // Calculate totals
+    let totalRecordings = 0;
+    Object.values(allWeeksData).forEach(weekData => {
+        totalRecordings += weekData.length;
+    });
+
+    const combinedData = {
+        extractionDate: dateStr,
+        extractionDay: dayName,
+        periodo: periodo,
+        totalRecordings: totalRecordings,
+        totalWeeks: Object.keys(allWeeksData).length,
+        weeks: allWeeksData
+    };
+
+    const jsonData = JSON.stringify(combinedData, null, 2);
+    const blob = new Blob([jsonData], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+
+    const filename = `utec-recordings-all-weeks-${periodo.replace(/\s/g, '')}-${dayName}-${dateStr}.json`;
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
+    URL.revokeObjectURL(url);
+    updateDebugPanel(`Data exported as: ${filename}`);
+}
+
+// Export data as JSON (single week)
 function exportData(data) {
     const jsonData = JSON.stringify(data, null, 2);
     const blob = new Blob([jsonData], { type: 'application/json' });
@@ -459,6 +797,13 @@ function exportData(data) {
 
     URL.revokeObjectURL(url);
     updateDebugPanel(`Data exported as: ${filename}`);
+
+    // Show final notification for single week mode
+    browser.runtime.sendMessage({
+        action: 'show-notification',
+        title: 'Extraction Complete',
+        message: `Extracted ${data.length} recordings from week ${weekNumber}`
+    });
 }
 
 // Close all Zoom tabs
