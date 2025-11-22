@@ -11,11 +11,14 @@ let expectedRecording = null; // Track which recording we're expecting
 // Recursive extraction state
 let recursiveExtractionState = {
     active: false,
+    phase: 'idle',        // 'idle', 'duplicating', 'extracting'
     originalTabId: null,
-    spawnedTabs: [],      // Track tabs we create for extraction
+    spawnedTabs: [],      // Track tabs we create: [{ tabId, weekNumber }]
     allRecordings: {},    // { weekNumber: [recordings] }
-    currentWeek: null,
-    periodo: ''
+    startWeek: null,
+    periodo: '',
+    extractionQueue: [],  // Queue of tabs to extract from
+    currentExtractingTab: null
 };
 
 // Listen for new tabs being created
@@ -214,48 +217,39 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ success: true });
 
     } else if (message.action === 'start-recursive-extraction') {
-        // Initialize recursive extraction state
+        // Initialize recursive extraction state - Phase 1: Duplicating tabs
         recursiveExtractionState = {
             active: true,
+            phase: 'duplicating',
             originalTabId: sender.tab.id,
-            spawnedTabs: [],
+            spawnedTabs: [{ tabId: sender.tab.id, weekNumber: message.currentWeek }],
             allRecordings: {},
-            currentWeek: message.currentWeek,
-            periodo: message.periodo
+            startWeek: message.currentWeek,
+            periodo: message.periodo,
+            extractionQueue: [],
+            currentExtractingTab: null
         };
-        activeExtractionTabId = sender.tab.id;
-        console.log('Started recursive extraction from week:', message.currentWeek);
-        sendResponse({ success: true });
-
-    } else if (message.action === 'store-week-recordings') {
-        // Store recordings for a specific week
-        const week = message.weekNumber;
-        recursiveExtractionState.allRecordings[week] = message.recordings;
-        console.log(`Stored ${message.recordings.length} recordings for week ${week}`);
+        console.log('Started recursive extraction - Phase 1: Duplicating from week', message.currentWeek);
         sendResponse({ success: true });
 
     } else if (message.action === 'duplicate-tab-for-next-week') {
-        // Duplicate current tab and navigate to previous week
+        // Phase 1: Duplicate current tab to go to previous week (NO extraction yet)
         const currentTabId = sender.tab.id;
+        const currentWeek = message.currentWeek;
 
         browser.tabs.duplicate(currentTabId).then((newTab) => {
-            console.log('Duplicated tab:', newTab.id);
-            recursiveExtractionState.spawnedTabs.push(newTab.id);
+            console.log('Duplicated tab:', newTab.id, 'for week', currentWeek - 1);
 
-            // Update active extraction tab to the new tab
-            activeExtractionTabId = newTab.id;
-
-            // Wait for the tab to be ready, then tell it to click Anterior and extract
+            // Wait for the tab to be ready, then tell it to click Anterior
             const waitForTabReady = (tabId, retries = 0) => {
                 browser.tabs.get(tabId).then((tab) => {
                     if (tab.status === 'complete') {
-                        // Tab is ready, send message to click Anterior and continue extraction
                         setTimeout(() => {
                             browser.tabs.sendMessage(tabId, {
-                                action: 'continue-recursive-extraction',
-                                isSpawnedTab: true
+                                action: 'navigate-to-previous-week',
+                                targetWeek: currentWeek - 1
                             }).catch((err) => {
-                                console.error('Failed to send continue message:', err);
+                                console.error('Failed to send navigate message:', err);
                                 if (retries < 5) {
                                     setTimeout(() => waitForTabReady(tabId, retries + 1), 1000);
                                 }
@@ -275,6 +269,59 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
         return true; // Keep channel open for async
 
+    } else if (message.action === 'register-week-tab') {
+        // Register a tab for a specific week (during duplication phase)
+        const weekNumber = message.weekNumber;
+        recursiveExtractionState.spawnedTabs.push({
+            tabId: sender.tab.id,
+            weekNumber: weekNumber
+        });
+        console.log(`Registered tab ${sender.tab.id} for week ${weekNumber}`);
+        sendResponse({ success: true });
+
+    } else if (message.action === 'all-tabs-ready') {
+        // Phase 1 complete - all tabs duplicated, now start extraction
+        console.log('All tabs ready! Starting Phase 2: Extraction');
+        recursiveExtractionState.phase = 'extracting';
+
+        // Build extraction queue (from week 1 to start week)
+        const sortedTabs = recursiveExtractionState.spawnedTabs
+            .sort((a, b) => a.weekNumber - b.weekNumber);
+        recursiveExtractionState.extractionQueue = [...sortedTabs];
+
+        console.log('Extraction queue:', recursiveExtractionState.extractionQueue);
+
+        // Notify original tab that extraction is starting
+        browser.tabs.sendMessage(recursiveExtractionState.originalTabId, {
+            action: 'extraction-phase-starting',
+            totalWeeks: sortedTabs.length
+        }).catch(console.error);
+
+        // Start extracting from first tab (week 1)
+        startNextExtraction();
+        sendResponse({ success: true });
+
+    } else if (message.action === 'store-week-recordings') {
+        // Store recordings for a specific week
+        const week = message.weekNumber;
+        recursiveExtractionState.allRecordings[week] = message.recordings;
+        console.log(`Stored ${message.recordings.length} recordings for week ${week}`);
+
+        // Notify original tab of progress
+        browser.tabs.sendMessage(recursiveExtractionState.originalTabId, {
+            action: 'week-extraction-complete',
+            weekNumber: week,
+            recordingsCount: message.recordings.length
+        }).catch(console.error);
+
+        sendResponse({ success: true });
+
+    } else if (message.action === 'tab-extraction-complete') {
+        // Current tab finished extraction, move to next
+        console.log('Tab extraction complete, moving to next...');
+        startNextExtraction();
+        sendResponse({ success: true });
+
     } else if (message.action === 'get-recursive-state') {
         // Return current recursive extraction state
         sendResponse({
@@ -288,10 +335,14 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
         const spawnedTabs = recursiveExtractionState.spawnedTabs;
         const originalTabId = recursiveExtractionState.originalTabId;
 
-        // Close all spawned tabs
-        if (spawnedTabs.length > 0) {
-            browser.tabs.remove(spawnedTabs).then(() => {
-                console.log(`Closed ${spawnedTabs.length} spawned tabs`);
+        // Close all spawned tabs EXCEPT the original
+        const tabsToClose = spawnedTabs
+            .filter(t => t.tabId !== originalTabId)
+            .map(t => t.tabId);
+
+        if (tabsToClose.length > 0) {
+            browser.tabs.remove(tabsToClose).then(() => {
+                console.log(`Closed ${tabsToClose.length} spawned tabs`);
             }).catch(console.error);
         }
 
@@ -310,20 +361,25 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
         // Reset state
         recursiveExtractionState = {
             active: false,
+            phase: 'idle',
             originalTabId: null,
             spawnedTabs: [],
             allRecordings: {},
-            currentWeek: null,
-            periodo: ''
+            startWeek: null,
+            periodo: '',
+            extractionQueue: [],
+            currentExtractingTab: null
         };
 
         sendResponse({ success: true });
 
     } else if (message.action === 'close-spawned-tabs') {
         // Close all spawned tabs without finishing (for cleanup)
-        const spawnedTabs = recursiveExtractionState.spawnedTabs;
-        if (spawnedTabs.length > 0) {
-            browser.tabs.remove(spawnedTabs).catch(console.error);
+        const tabsToClose = recursiveExtractionState.spawnedTabs
+            .filter(t => t.tabId !== recursiveExtractionState.originalTabId)
+            .map(t => t.tabId);
+        if (tabsToClose.length > 0) {
+            browser.tabs.remove(tabsToClose).catch(console.error);
         }
         recursiveExtractionState.spawnedTabs = [];
         sendResponse({ success: true });
@@ -365,5 +421,80 @@ browser.webNavigation.onBeforeNavigate.addListener((details) => {
         { hostContains: "zoom.us" }
     ]
 });
+
+// Helper function to start extraction from next tab in queue
+function startNextExtraction() {
+    if (recursiveExtractionState.extractionQueue.length === 0) {
+        // All tabs extracted, finish up
+        console.log('All tabs extracted! Finishing...');
+        browser.tabs.sendMessage(recursiveExtractionState.originalTabId, {
+            action: 'all-extractions-complete'
+        }).catch(console.error);
+
+        // Trigger finish
+        setTimeout(() => {
+            const allRecordings = recursiveExtractionState.allRecordings;
+            const spawnedTabs = recursiveExtractionState.spawnedTabs;
+            const originalTabId = recursiveExtractionState.originalTabId;
+
+            // Close all spawned tabs EXCEPT the original
+            const tabsToClose = spawnedTabs
+                .filter(t => t.tabId !== originalTabId)
+                .map(t => t.tabId);
+
+            if (tabsToClose.length > 0) {
+                browser.tabs.remove(tabsToClose).then(() => {
+                    console.log(`Closed ${tabsToClose.length} spawned tabs`);
+                }).catch(console.error);
+            }
+
+            // Send final results to original tab
+            if (originalTabId) {
+                browser.tabs.sendMessage(originalTabId, {
+                    action: 'display-final-results',
+                    allRecordings: allRecordings,
+                    periodo: recursiveExtractionState.periodo
+                }).catch(console.error);
+
+                browser.tabs.update(originalTabId, { active: true }).catch(console.error);
+            }
+
+            // Reset state
+            recursiveExtractionState = {
+                active: false,
+                phase: 'idle',
+                originalTabId: null,
+                spawnedTabs: [],
+                allRecordings: {},
+                startWeek: null,
+                periodo: '',
+                extractionQueue: [],
+                currentExtractingTab: null
+            };
+        }, 500);
+        return;
+    }
+
+    // Get next tab from queue
+    const nextTab = recursiveExtractionState.extractionQueue.shift();
+    recursiveExtractionState.currentExtractingTab = nextTab;
+    activeExtractionTabId = nextTab.tabId;
+
+    console.log(`Starting extraction for week ${nextTab.weekNumber} (tab ${nextTab.tabId})`);
+
+    // Focus on the tab and tell it to extract
+    browser.tabs.update(nextTab.tabId, { active: true }).then(() => {
+        setTimeout(() => {
+            browser.tabs.sendMessage(nextTab.tabId, {
+                action: 'extract-this-week',
+                weekNumber: nextTab.weekNumber
+            }).catch((err) => {
+                console.error('Failed to send extract message:', err);
+                // Skip this tab and move to next
+                startNextExtraction();
+            });
+        }, 300);
+    }).catch(console.error);
+}
 
 console.log('UTEC Conference Link Extractor background script loaded');

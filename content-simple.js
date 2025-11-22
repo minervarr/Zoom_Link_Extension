@@ -213,14 +213,33 @@ browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
             return;
         }
 
-        // Start automatic recursive extraction
+        // Start automatic recursive extraction (Phase 1: Duplicate tabs)
         startAutomaticRecursiveExtraction();
 
-    } else if (message.action === 'continue-recursive-extraction') {
-        // This is a spawned tab - click Anterior then extract
-        console.log('Received continue-recursive-extraction command');
-        isSpawnedTab = message.isSpawnedTab || false;
-        continueRecursiveExtraction();
+    } else if (message.action === 'navigate-to-previous-week') {
+        // Phase 1: This is a spawned tab - click Anterior to go to target week
+        console.log('Received navigate-to-previous-week command, target:', message.targetWeek);
+        navigateToPreviousWeek(message.targetWeek);
+
+    } else if (message.action === 'extraction-phase-starting') {
+        // Phase 2 starting - update UI
+        console.log('Extraction phase starting, total weeks:', message.totalWeeks);
+        updateAutomaticExtractionStatus(`Phase 2: Starting extraction from ${message.totalWeeks} weeks...`);
+
+    } else if (message.action === 'week-extraction-complete') {
+        // A week was extracted - update progress on original tab
+        console.log('Week extraction complete:', message.weekNumber);
+        updateAutomaticExtractionStatus(`Week ${message.weekNumber}: Captured ${message.recordingsCount} recording(s)`);
+
+    } else if (message.action === 'extract-this-week') {
+        // Phase 2: Extract recordings from this tab
+        console.log('Received extract-this-week command for week', message.weekNumber);
+        extractThisWeekOnly(message.weekNumber);
+
+    } else if (message.action === 'all-extractions-complete') {
+        // All extractions done
+        console.log('All extractions complete!');
+        updateAutomaticExtractionStatus('All weeks extracted! Finalizing...');
 
     } else if (message.action === 'display-final-results') {
         // Original tab receiving final results from all weeks
@@ -514,6 +533,7 @@ async function waitForWeekChange(previousWeek) {
 }
 
 // Start automatic recursive extraction (triggered by shortcut)
+// Phase 1: Duplicate tabs from current week down to week 1
 async function startAutomaticRecursiveExtraction() {
     const currentWeek = getWeekNumber();
     periodo = getPeriodo();
@@ -530,34 +550,168 @@ async function startAutomaticRecursiveExtraction() {
         periodo: periodo
     });
 
-    // Start extraction for current week
-    isRecursiveMode = true;
-    isSpawnedTab = false;
-    await performTabDuplicationExtraction();
+    updateAutomaticExtractionStatus(`Phase 1: Duplicating tabs from week ${currentWeek} to week 1...`);
+
+    // If we're already at week 1, go straight to extraction
+    if (currentWeek <= 1) {
+        updateAutomaticExtractionStatus('Already at week 1, starting extraction...');
+        await browser.runtime.sendMessage({ action: 'all-tabs-ready' });
+        return;
+    }
+
+    // Start duplicating - request background to duplicate this tab
+    updateAutomaticExtractionStatus(`Creating tab for week ${currentWeek - 1}...`);
+    await browser.runtime.sendMessage({
+        action: 'duplicate-tab-for-next-week',
+        currentWeek: currentWeek
+    });
 }
 
-// Continue recursive extraction (for spawned tabs)
-async function continueRecursiveExtraction() {
-    console.log('Continuing recursive extraction in spawned tab');
+// Phase 1: Navigate to previous week (called on spawned tabs)
+async function navigateToPreviousWeek(targetWeek) {
+    console.log('Navigating to week', targetWeek);
 
-    // Click Anterior button to go to previous week
+    // Click Anterior button
     const clicked = clickAnteriorButton();
     if (!clicked) {
         console.error('Could not find Anterior button');
-        // Finish extraction
-        await browser.runtime.sendMessage({ action: 'finish-recursive-extraction' });
+        // Still register this tab and signal all tabs ready
+        await browser.runtime.sendMessage({
+            action: 'register-week-tab',
+            weekNumber: getWeekNumber()
+        });
+        await browser.runtime.sendMessage({ action: 'all-tabs-ready' });
         return;
     }
 
     // Wait for page to update
     await sleep(2000);
-
-    // Wait for table to load
     await waitForTableLoad();
 
-    // Now extract from this week
-    isRecursiveMode = true;
-    await performTabDuplicationExtraction();
+    // Verify we're on the correct week
+    const actualWeek = getWeekNumber();
+    console.log('After clicking Anterior, now at week', actualWeek);
+
+    // Register this tab for this week
+    await browser.runtime.sendMessage({
+        action: 'register-week-tab',
+        weekNumber: actualWeek
+    });
+
+    // If we need to continue duplicating
+    if (actualWeek > 1) {
+        // Duplicate this tab for the next week
+        await browser.runtime.sendMessage({
+            action: 'duplicate-tab-for-next-week',
+            currentWeek: actualWeek
+        });
+    } else {
+        // We've reached week 1, all tabs are ready
+        console.log('Reached week 1! All tabs ready.');
+        await browser.runtime.sendMessage({ action: 'all-tabs-ready' });
+    }
+}
+
+// Phase 2: Extract recordings from this specific week
+async function extractThisWeekOnly(weekNumber) {
+    try {
+        console.log('Extracting week', weekNumber);
+
+        // Clear any previous recordings
+        extractedData = [];
+
+        // Set this tab as the extraction tab
+        browser.runtime.sendMessage({ action: 'set-extraction-tab' });
+        await browser.runtime.sendMessage({ action: 'clear-captured-recordings' });
+
+        // Find recording buttons
+        const recordingButtons = findRecordingButtons();
+
+        if (recordingButtons.length === 0) {
+            console.log('No recordings found in week', weekNumber);
+
+            // Store empty array
+            await browser.runtime.sendMessage({
+                action: 'store-week-recordings',
+                weekNumber: weekNumber,
+                recordings: []
+            });
+
+            // Signal this tab is done
+            await browser.runtime.sendMessage({ action: 'tab-extraction-complete' });
+            return;
+        }
+
+        console.log(`Found ${recordingButtons.length} recording(s) in week ${weekNumber}`);
+
+        // Collect subject info first
+        recordingButtons.forEach((button, index) => {
+            const subjectData = extractSubjectInfo(button);
+            extractedData.push({
+                index: index,
+                ...subjectData,
+                buttonId: button.id,
+                timestamp: Date.now(),
+                weekNumber: weekNumber
+            });
+        });
+
+        // Click each button to open recordings
+        for (let i = 0; i < recordingButtons.length; i++) {
+            const button = recordingButtons[i];
+            const data = extractedData[i];
+
+            await browser.runtime.sendMessage({
+                action: 'expect-recording',
+                expectedData: data
+            });
+
+            button.click();
+            await sleep(600);
+        }
+
+        // Wait for recordings to be captured
+        await sleep(2000);
+
+        // Get captured recordings
+        const response = await browser.runtime.sendMessage({
+            action: 'get-captured-recordings'
+        });
+
+        const recordings = response?.recordings || [];
+        const finalData = recordings.map((recording) => ({
+            weekNumber: recording.weekNumber,
+            subject: recording.subject,
+            seccion: recording.seccion,
+            fecha: recording.fecha,
+            horaInicio: recording.horaInicio,
+            docente: recording.docente,
+            tipo: recording.tipo,
+            estado: recording.estado,
+            modalidad: recording.modalidad,
+            url: recording.url,
+            title: recording.title,
+            timestamp: recording.timestamp,
+            buttonId: recording.buttonId
+        }));
+
+        // Store this week's recordings
+        await browser.runtime.sendMessage({
+            action: 'store-week-recordings',
+            weekNumber: weekNumber,
+            recordings: finalData
+        });
+
+        console.log(`Week ${weekNumber}: Captured ${finalData.length} recordings`);
+
+        // Signal this tab is done
+        await browser.runtime.sendMessage({ action: 'tab-extraction-complete' });
+
+    } catch (error) {
+        console.error('Extraction error:', error);
+        // Still signal completion to not block the queue
+        await browser.runtime.sendMessage({ action: 'tab-extraction-complete' });
+    }
 }
 
 // Wait for table to load
@@ -577,120 +731,6 @@ async function waitForTableLoad() {
     });
 }
 
-// Perform extraction with tab duplication (new method)
-async function performTabDuplicationExtraction() {
-    try {
-        const weekNumber = getWeekNumber();
-        console.log('Extracting week', weekNumber);
-
-        // Update panel
-        updateAutomaticExtractionStatus(`Extracting week ${weekNumber}...`);
-
-        // Clear any previous recordings for this extraction
-        extractedData = [];
-
-        // Notify background script
-        browser.runtime.sendMessage({ action: 'set-extraction-tab' });
-        await browser.runtime.sendMessage({ action: 'clear-captured-recordings' });
-
-        // Find recording buttons
-        const recordingButtons = findRecordingButtons();
-
-        if (recordingButtons.length === 0) {
-            console.log('No recordings found in week', weekNumber);
-            updateAutomaticExtractionStatus(`Week ${weekNumber}: No recordings found`);
-
-            // Store empty array for this week
-            await browser.runtime.sendMessage({
-                action: 'store-week-recordings',
-                weekNumber: weekNumber,
-                recordings: []
-            });
-        } else {
-            updateAutomaticExtractionStatus(`Week ${weekNumber}: Found ${recordingButtons.length} recording(s)`);
-
-            // Collect subject info first
-            recordingButtons.forEach((button, index) => {
-                const subjectData = extractSubjectInfo(button);
-                extractedData.push({
-                    index: index,
-                    ...subjectData,
-                    buttonId: button.id,
-                    timestamp: Date.now(),
-                    weekNumber: weekNumber
-                });
-            });
-
-            // Click each button
-            for (let i = 0; i < recordingButtons.length; i++) {
-                const button = recordingButtons[i];
-                const data = extractedData[i];
-
-                await browser.runtime.sendMessage({
-                    action: 'expect-recording',
-                    expectedData: data
-                });
-
-                button.click();
-                await sleep(500);
-            }
-
-            // Wait for recordings to be captured
-            await sleep(1500);
-
-            // Get captured recordings
-            const response = await browser.runtime.sendMessage({
-                action: 'get-captured-recordings'
-            });
-
-            const recordings = response?.recordings || [];
-            const finalData = recordings.map((recording) => ({
-                weekNumber: recording.weekNumber,
-                subject: recording.subject,
-                seccion: recording.seccion,
-                fecha: recording.fecha,
-                horaInicio: recording.horaInicio,
-                docente: recording.docente,
-                tipo: recording.tipo,
-                estado: recording.estado,
-                modalidad: recording.modalidad,
-                url: recording.url,
-                title: recording.title,
-                timestamp: recording.timestamp,
-                buttonId: recording.buttonId
-            }));
-
-            // Store this week's recordings
-            await browser.runtime.sendMessage({
-                action: 'store-week-recordings',
-                weekNumber: weekNumber,
-                recordings: finalData
-            });
-
-            updateAutomaticExtractionStatus(`Week ${weekNumber}: Captured ${finalData.length} recording(s)`);
-        }
-
-        // Check if we need to continue to previous week
-        if (weekNumber > 1) {
-            updateAutomaticExtractionStatus(`Duplicating tab for week ${weekNumber - 1}...`);
-
-            // Request background to duplicate this tab
-            await browser.runtime.sendMessage({
-                action: 'duplicate-tab-for-next-week'
-            });
-
-            // This tab's job is done - it will be closed by background when extraction finishes
-        } else {
-            // Week 1 reached - finish extraction
-            updateAutomaticExtractionStatus('All weeks extracted! Finalizing...');
-            await browser.runtime.sendMessage({ action: 'finish-recursive-extraction' });
-        }
-
-    } catch (error) {
-        console.error('Extraction error:', error);
-        updateAutomaticExtractionStatus(`Error: ${error.message}`);
-    }
-}
 
 // Show automatic extraction panel
 function showAutomaticExtractionPanel(startWeek) {
