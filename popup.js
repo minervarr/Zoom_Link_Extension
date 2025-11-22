@@ -19,6 +19,9 @@ const DEFAULT_SETTINGS = {
 // Current settings
 let currentSettings = { ...DEFAULT_SETTINGS };
 
+// Detected week from the conference page
+let detectedWeek = null;
+
 // Browser API compatibility
 const runtime = typeof browser !== 'undefined' ? browser : chrome;
 const storage = runtime.storage?.local || runtime.storage?.sync;
@@ -29,6 +32,7 @@ document.addEventListener('DOMContentLoaded', function() {
     updatePopupStatus();
     setupExtractionButton();
     setupSettingsListeners();
+    detectCurrentWeek();
 });
 
 /**
@@ -291,5 +295,92 @@ async function updatePopupStatus() {
                 <span>Error checking page status. Please refresh and try again.</span>
             </div>
         `;
+    }
+}
+
+/**
+ * Detect the current week from the conference page
+ */
+async function detectCurrentWeek() {
+    try {
+        const tabs = await runtime.tabs.query({ active: true, currentWindow: true });
+        const currentTab = tabs[0];
+
+        if (!currentTab || !currentTab.url || !currentTab.url.includes('utec.edu.pe')) {
+            return;
+        }
+
+        // Send message to content script to get current week
+        const response = await runtime.tabs.sendMessage(currentTab.id, {
+            action: 'get-current-week'
+        });
+
+        if (response && response.weekNumber) {
+            detectedWeek = response.weekNumber;
+            updateDetectedWeekUI(detectedWeek);
+        }
+    } catch (error) {
+        console.error('Error detecting current week:', error);
+    }
+}
+
+/**
+ * Update UI elements with detected week
+ */
+function updateDetectedWeekUI(weekNumber) {
+    // Update main tab week display
+    const weekStatusItem = document.getElementById('week-status-item');
+    const currentWeekElement = document.getElementById('current-week');
+    if (weekStatusItem && currentWeekElement) {
+        weekStatusItem.style.display = 'flex';
+        currentWeekElement.textContent = `Week ${weekNumber}`;
+    }
+
+    // Update settings badge
+    const detectedWeekBadge = document.getElementById('detected-week-badge');
+    const detectedWeekValue = document.getElementById('detected-week-value');
+    if (detectedWeekBadge && detectedWeekValue) {
+        detectedWeekBadge.style.display = 'inline-block';
+        detectedWeekValue.textContent = weekNumber;
+    }
+
+    // Update "Use detected week" button
+    const useDetectedWeekBtn = document.getElementById('use-detected-week');
+    const useDetectedWeekValue = document.getElementById('use-detected-week-value');
+    if (useDetectedWeekBtn && useDetectedWeekValue) {
+        useDetectedWeekBtn.style.display = 'inline-block';
+        useDetectedWeekValue.textContent = weekNumber;
+    }
+
+    // Auto-set the "From week" to detected week if it hasn't been customized
+    // Only auto-set if week range is enabled and weekFrom is still default
+    const weekFromInput = document.getElementById('setting-week-from');
+    if (weekFromInput) {
+        // Check if user hasn't manually changed it from default
+        if (currentSettings.weekFrom === DEFAULT_SETTINGS.weekFrom) {
+            weekFromInput.value = weekNumber;
+            currentSettings.weekFrom = weekNumber;
+            saveSettings();
+        }
+    }
+
+    // Add click handler for "Use detected week" button
+    const useDetectedBtn = document.getElementById('use-detected-week');
+    if (useDetectedBtn) {
+        useDetectedBtn.onclick = () => {
+            const weekFromInput = document.getElementById('setting-week-from');
+            if (weekFromInput && detectedWeek) {
+                weekFromInput.value = detectedWeek;
+                currentSettings.weekFrom = detectedWeek;
+                saveSettings();
+
+                // Show brief feedback
+                const originalText = useDetectedBtn.textContent;
+                useDetectedBtn.textContent = 'Applied!';
+                setTimeout(() => {
+                    useDetectedBtn.innerHTML = `Use detected week (<span id="use-detected-week-value">${detectedWeek}</span>) as start`;
+                }, 1000);
+            }
+        };
     }
 }

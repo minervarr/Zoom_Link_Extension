@@ -430,6 +430,56 @@
         .week-range-inputs.active {
             display: block;
         }
+
+        /* Mode info items for settings */
+        .mode-info-item {
+            display: flex;
+            align-items: flex-start;
+            padding: 12px 14px;
+            border-bottom: 1px solid #f0f0f0;
+            gap: 10px;
+        }
+
+        .mode-info-item:last-child {
+            border-bottom: none;
+        }
+
+        .mode-info-icon {
+            font-size: 18px;
+            width: 28px;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 6px;
+            flex-shrink: 0;
+        }
+
+        .shortcut-icon {
+            background: #d4edda;
+        }
+
+        .manual-icon {
+            background: #cce5ff;
+        }
+
+        .mode-info-content {
+            flex: 1;
+        }
+
+        /* Current week badge */
+        .week-badge {
+            background: #28a745;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .week-badge.detected {
+            background: #17a2b8;
+        }
     </style>
 </head>
 <body>
@@ -466,19 +516,13 @@
                 <span class="status-label">Extension Status:</span>
                 <span class="status-value active" id="extension-status">Ready</span>
             </div>
+            <div class="status-item" id="week-status-item" style="display: none;">
+                <span class="status-label">Current Week:</span>
+                <span class="status-value" id="current-week">-</span>
+            </div>
         </div>
 
         <div id="page-status"></div>
-
-        <div class="mode-card mode-shortcut">
-            <h3>Shortcut Mode</h3>
-            <p>Press <strong>Ctrl+Shift+L</strong> for automatic full extraction (all weeks using tab duplication)</p>
-        </div>
-
-        <div class="mode-card mode-manual">
-            <h3>Manual Mode</h3>
-            <p>Choose to extract single week or all weeks with the button below</p>
-        </div>
 
         <button id="start-extraction" class="btn btn-primary">
             Start Extraction (Choose Mode)
@@ -540,7 +584,12 @@
         </div>
 
         <div class="settings-section">
-            <div class="settings-section-header">Week Range</div>
+            <div class="settings-section-header">
+                Week Range
+                <span id="detected-week-badge" class="week-badge detected" style="display: none; margin-left: 8px;">
+                    Detected: <span id="detected-week-value">-</span>
+                </span>
+            </div>
             <div class="setting-item-vertical">
                 <div class="week-range-toggle">
                     <div class="setting-info">
@@ -562,6 +611,9 @@
                     <div class="setting-desc" style="margin-top: 8px; font-style: italic;">
                         Example: "From 15 to 13" extracts weeks 15, 14, and 13
                     </div>
+                    <button id="use-detected-week" class="btn-link" style="margin-top: 8px; display: none;">
+                        Use detected week (<span id="use-detected-week-value">-</span>) as start
+                    </button>
                 </div>
             </div>
         </div>
@@ -591,6 +643,24 @@
                     <input type="checkbox" id="setting-debug-mode">
                     <span class="toggle-slider"></span>
                 </label>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <div class="settings-section-header">Extraction Modes</div>
+            <div class="mode-info-item">
+                <div class="mode-info-icon shortcut-icon">⌨️</div>
+                <div class="mode-info-content">
+                    <div class="setting-label">Shortcut Mode</div>
+                    <div class="setting-desc">Press <strong>Ctrl+Shift+L</strong> for automatic full extraction (all weeks using tab duplication)</div>
+                </div>
+            </div>
+            <div class="mode-info-item">
+                <div class="mode-info-icon manual-icon">🖱️</div>
+                <div class="mode-info-content">
+                    <div class="setting-label">Manual Mode</div>
+                    <div class="setting-desc">Use the button on Main tab to choose single week or all weeks extraction</div>
+                </div>
             </div>
         </div>
 

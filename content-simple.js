@@ -248,6 +248,13 @@ function clickAnteriorButton() {
 
 // Listen for messages from background script
 browser.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.action === 'get-current-week') {
+        // Return the current week number to the popup
+        const weekNumber = getWeekNumber();
+        sendResponse({ weekNumber: weekNumber });
+        return true;
+    }
+
     if (message.action === 'extract-links') {
         debugLog('Received extract-links command');
 
