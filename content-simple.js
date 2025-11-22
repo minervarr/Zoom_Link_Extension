@@ -428,6 +428,9 @@ function displayResults(data) {
             if (closeBtn) {
                 closeBtn.onclick = () => closeAllZoomTabs();
             }
+
+            // Auto-download JSON after successful extraction
+            exportData(data);
         }
     }
 }
@@ -437,16 +440,25 @@ function exportData(data) {
     const jsonData = JSON.stringify(data, null, 2);
     const blob = new Blob([jsonData], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    
+
+    // Build enhanced filename with week number and day name
+    const now = new Date();
+    const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const dayName = dayNames[now.getDay()];
+    const dateStr = now.toISOString().split('T')[0];
+    const weekNumber = data[0]?.weekNumber || 'unknown';
+
+    const filename = `utec-recordings-week${weekNumber}-${dayName}-${dateStr}.json`;
+
     const a = document.createElement('a');
     a.href = url;
-    a.download = `utec-recordings-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    
+
     URL.revokeObjectURL(url);
-    updateDebugPanel('Data exported successfully!');
+    updateDebugPanel(`Data exported as: ${filename}`);
 }
 
 // Close all Zoom tabs
